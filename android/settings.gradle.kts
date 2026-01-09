@@ -1,16 +1,35 @@
+import org.gradle.api.initialization.resolve.RepositoriesMode
+
 pluginManagement {
     val flutterSdkPath = run {
-        val properties = java.util.Properties()
+        val properties = Properties()
         file("local.properties").inputStream().use { properties.load(it) }
         properties.getProperty("flutter.sdk") ?: error("flutter.sdk not set in local.properties")
     }
 
     includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
+}
+
+dependencyResolutionManagement {
+    // ✅ Works on your Gradle version (unlike ALLOW_PROJECT_REPOS)
+    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
 
     repositories {
         google()
         mavenCentral()
-        gradlePluginPortal()
+        maven(url = "https://storage.googleapis.com/download.flutter.io")
+
+        // Tuya repos
+        maven(url = "https://maven-other.tuya.com/repository/maven-releases/")
+        maven(url = "https://maven-other.tuya.com/repository/maven-commercial-releases/")
+        maven(url = "https://maven-other.tuya.com/repository/maven-snapshots/")
+        maven(url = "https://maven-other.tuya.com/repository/maven-commercial-snapshots/")
+
+        // Huawei repo
+        maven(url = "https://developer.huawei.com/repo/")
+
+        // Optional
+        maven(url = "https://jitpack.io")
     }
 }
 

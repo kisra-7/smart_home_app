@@ -62,7 +62,7 @@ class _SignUpPageState extends State<SignUpPage> {
                     SizedBox(width: 6),
                     Text('I agree to the '),
                     Text(
-                      'terms and conditions',
+                      'terms and conditions agreement',
                       style: TextStyle(fontWeight: FontWeight.w900),
                     ),
                   ],
