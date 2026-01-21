@@ -1,3 +1,9 @@
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+# smart_home_app
+=======
+>>>>>>> cc30e20 (fixed gradle problems)
 # alrawi_app
 
 A new Flutter project.
@@ -14,3 +20,7 @@ A few resources to get you started if this is your first Flutter project:
 For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
+<<<<<<< HEAD
+=======
+>>>>>>> 61d0ca7 (Initial commit)
+>>>>>>> cc30e20 (fixed gradle problems)

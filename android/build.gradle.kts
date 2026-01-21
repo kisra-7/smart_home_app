@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import org.gradle.api.file.Directory
 import org.gradle.api.tasks.Delete
 
@@ -23,4 +24,11 @@ subprojects {
 // ✅ Standard clean task (Flutter calls this too)
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
+=======
+// Root build.gradle.kts for Flutter/Android
+// ✅ Do NOT add repositories {} here (settings.gradle.kts controls repos)
+
+tasks.register("clean", Delete::class) {
+    delete(rootProject.buildDir)
+>>>>>>> cc30e20 (fixed gradle problems)
 }

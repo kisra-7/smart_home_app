@@ -1,3 +1,55 @@
+<<<<<<< HEAD
+# Miscellaneous
+*.class
+=======
+<<<<<<< HEAD
+# Gradle files
+.gradle/
+build/
+
+# Local configuration file (sdk path, etc)
+local.properties
+
+# Log/OS Files
+>>>>>>> cc30e20 (fixed gradle problems)
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+<<<<<<< HEAD
+=======
+# Android Profiling
+*.hprof
+=======
 # Miscellaneous
 *.class
 *.log
@@ -33,6 +85,7 @@ migrate_working_dir/
 /build/
 /coverage/
 
+>>>>>>> cc30e20 (fixed gradle problems)
 # Symbolication related
 app.*.symbols
 
@@ -43,3 +96,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+<<<<<<< HEAD
+=======
+>>>>>>> 61d0ca7 (Initial commit)
+>>>>>>> cc30e20 (fixed gradle problems)
