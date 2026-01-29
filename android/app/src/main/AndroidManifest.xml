@@ -1,56 +1,23 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.alrawi_app">
 
-    <!-- =========================
-         Network (Tuya cloud)
-         ========================= -->
+    <!-- Network access (Tuya needs internet) -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Common permissions for Tuya / networking -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-
-    <!-- =========================
-         Bluetooth / Nearby Devices
-         (required for device discovery / pairing)
-         ========================= -->
-
-    <!-- Android 12+ (API 31+): must request these at runtime -->
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-
-    <!-- Android 11 and below -->
-    <uses-permission android:name="android.permission.BLUETOOTH" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
-
-    <!-- =========================
-         Location (needed by Android for Wi-Fi/BLE scanning)
-         ========================= -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-
-    <!-- Optional but sometimes needed on certain Android versions/vendors -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 
-    <!-- Declare hardware features (NOT required, so we set required=false) -->
-    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
-    <uses-feature android:name="android.hardware.wifi" android:required="false" />
-<<<<<<< HEAD
-=======
-    <uses-permission android:name="android.permission.INTERNET"/>
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
-    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE"/>
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
->>>>>>> cc30e20 (fixed gradle problems)
-
     <application
-        android:label="alrawi_app"
         android:name="${applicationName}"
-        android:icon="@mipmap/launcher_icon">
+        android:label="alrawi_app"
+        android:icon="@mipmap/ic_launcher">
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
-            android:taskAffinity=""
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
@@ -64,28 +31,12 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
         </activity>
 
-        <!-- Flutter embedding -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
-
-        <!-- ✅ Tuya / ThingSmart App credentials (we will move these out of manifest later for security) -->
-        <meta-data
-            android:name="THING_SMART_APPKEY"
-            android:value="n7haetp3sx5appekxtfn" />
-        <meta-data
-            android:name="THING_SMART_SECRET"
-            android:value="fcekuqjd38rqmutnav33u8u9y848p8g5" />
-
     </application>
-
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.PROCESS_TEXT" />
-            <data android:mimeType="text/plain" />
-        </intent>
-    </queries>
 
 </manifest>

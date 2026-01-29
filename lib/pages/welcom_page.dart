@@ -1,4 +1,4 @@
-import 'package:alrawi_app/pages/sign_up_page.dart';
+import 'package:alrawi_app/pages/sign_up_page.dart' hide SafeArea;
 import 'package:flutter/material.dart';
 import 'package:lottie/lottie.dart';
 
@@ -19,23 +19,31 @@ class WelcomPage extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                   Container(
+                  Container(
                     width: double.infinity,
                     height: 350,
-                    child: Lottie.asset('assets/lotties/lottie2.json')),
-                    SizedBox(
-                      height: 20,
+                    child: Lottie.asset('assets/lotties/lottie2.json'),
+                  ),
+                  SizedBox(height: 20),
+                  Text(
+                    'ALRAWI SMART HOME',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 30,
+                      color: const Color.fromARGB(255, 213, 249, 249),
                     ),
-                     Text('ALRAWI SMART HOME',style: TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 30,color: const Color.fromARGB(255, 213, 249, 249)),),
-                  SizedBox(
-                      height: 120,
-                    ),
+                  ),
+                  SizedBox(height: 120),
                   InkWell(
                     onTap: () {
-                      Navigator.push(context, MaterialPageRoute(builder: (context){
-                        return SignUpPage();
-                      }));
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) {
+                            return SignUpPage();
+                          },
+                        ),
+                      );
                     },
                     child: Container(
                       margin: EdgeInsets.symmetric(horizontal: 20),
@@ -43,18 +51,20 @@ class WelcomPage extends StatelessWidget {
                       width: double.infinity,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(20),
-                        color: const Color.fromARGB(255, 228, 245, 252)
+                        color: const Color.fromARGB(255, 228, 245, 252),
                       ),
                       child: Center(
-                        child: Text('Get Started',style: TextStyle(
-                          color: Colors.black,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 17
-                        ),),
+                        child: Text(
+                          'Get Started',
+                          style: TextStyle(
+                            color: Colors.black,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 17,
+                          ),
+                        ),
                       ),
                     ),
                   ),
-                  
                 ],
               ),
             ),

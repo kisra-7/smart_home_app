@@ -3,10 +3,7 @@ import 'package:flutter/services.dart';
 class TuyaPlatform {
   static const MethodChannel _channel = MethodChannel('tuya_config');
 
-<<<<<<< HEAD
   /// Must be called once before any Tuya call.
-=======
->>>>>>> cc30e20 (fixed gradle problems)
   static Future<void> initSdk() async {
     await _channel.invokeMethod('initSdk');
   }
@@ -16,7 +13,6 @@ class TuyaPlatform {
     return res == true;
   }
 
-<<<<<<< HEAD
   /// ✅ Login with email (Tuya)
   ///
   /// IMPORTANT:
@@ -35,16 +31,12 @@ class TuyaPlatform {
   }
 
   /// Backward compatible alias:
-  /// If some parts of your UI still call loginEmail(), this keeps them working,
-  /// but internally it calls the correct native method name.
-=======
->>>>>>> cc30e20 (fixed gradle problems)
+  /// If some parts of your UI still call loginEmail(), this keeps them working.
   static Future<void> loginEmail({
     required String countryCode,
     required String email,
     required String password,
   }) async {
-<<<<<<< HEAD
     return loginByEmail(
       countryCode: countryCode,
       email: email,
@@ -57,8 +49,6 @@ class TuyaPlatform {
   /// type values vary by Tuya SDK, common patterns:
   /// - 1 = register
   /// - 2 = login / reset (depends on SDK)
-  ///
-  /// If your Android side uses a different name/params, match it there too.
   static Future<void> sendEmailCode({
     required String countryCode,
     required String email,
@@ -71,23 +61,18 @@ class TuyaPlatform {
     });
   }
 
-  /// ✅ Register account inside your appKey user system
-  ///
-  /// Most Tuya flows require a verification code.
+  /// ✅ Register account (Tuya / ThingClips)
   static Future<void> registerEmail({
     required String countryCode,
     required String email,
     required String password,
+    required String code,
   }) async {
     await _channel.invokeMethod('registerEmail', {
       'countryCode': countryCode.trim(),
       'email': email.trim(),
-=======
-    await _channel.invokeMethod('loginEmail', {
-      'countryCode': countryCode,
-      'email': email,
->>>>>>> cc30e20 (fixed gradle problems)
       'password': password,
+      'code': code.trim(),
     });
   }
 
@@ -95,17 +80,16 @@ class TuyaPlatform {
     await _channel.invokeMethod('logout');
   }
 
-<<<<<<< HEAD
   /// Returns: List<Map> like [{"homeId": 123, "name": "Home"}]
-=======
->>>>>>> cc30e20 (fixed gradle problems)
   static Future<List<Map<String, dynamic>>> getHomeList() async {
     final res = await _channel.invokeMethod('getHomeList');
-    final list = (res as List).cast<Map>();
-    return list.map((e) => e.cast<String, dynamic>()).toList();
+    final list = (res as List).cast<dynamic>();
+
+    return list.map((e) {
+      final map = Map<String, dynamic>.from(e as Map);
+      return map;
+    }).toList();
   }
-<<<<<<< HEAD
-=======
 
   static Future<Map<String, dynamic>> createHome({
     required String name,
@@ -117,7 +101,8 @@ class TuyaPlatform {
       'geoName': geoName,
       'rooms': rooms,
     });
-    return (res as Map).cast<String, dynamic>();
+
+    return Map<String, dynamic>.from(res as Map);
   }
 
   /// Opens Tuya Activator UI (BizBundle) to add a gateway/device
@@ -139,5 +124,4 @@ class TuyaPlatform {
   static Future<void> stopActivator() async {
     await _channel.invokeMethod('stopActivator');
   }
->>>>>>> cc30e20 (fixed gradle problems)
 }

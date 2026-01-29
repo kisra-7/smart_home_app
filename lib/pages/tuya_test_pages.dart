@@ -9,16 +9,11 @@ class TuyaTestPage extends StatefulWidget {
 }
 
 class _TuyaTestPageState extends State<TuyaTestPage> {
-<<<<<<< HEAD
+  // Login / Register
   final _countryCtrl = TextEditingController(text: "968"); // Oman default
   final _emailCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
-
-=======
-  // Login
-  final _countryCtrl = TextEditingController(text: "968");
-  final _emailCtrl = TextEditingController();
-  final _passCtrl = TextEditingController();
+  final _codeCtrl = TextEditingController(); // verification code for register
 
   // Create home
   final _homeNameCtrl = TextEditingController(text: "My Home");
@@ -28,22 +23,15 @@ class _TuyaTestPageState extends State<TuyaTestPage> {
   // Activator UI (BizBundle)
   final _gwIdCtrl = TextEditingController();
 
->>>>>>> cc30e20 (fixed gradle problems)
   bool _sdkReady = false;
   bool _loggedIn = false;
 
   bool _busyInit = false;
-<<<<<<< HEAD
+  bool _busySendCode = false;
   bool _busyRegister = false;
   bool _busyLogin = false;
   bool _busyLogout = false;
-  bool _busyHomes = false;
 
-  List<Map<String, dynamic>> _homes = [];
-
-=======
-  bool _busyLogin = false;
-  bool _busyLogout = false;
   bool _busyHomes = false;
   bool _busyCreateHome = false;
   bool _busyOpenGw = false;
@@ -54,30 +42,22 @@ class _TuyaTestPageState extends State<TuyaTestPage> {
   String? _selectedHomeName;
 
   List<Map<String, dynamic>> _homes = [];
->>>>>>> cc30e20 (fixed gradle problems)
   final List<String> _logs = [];
 
   void _log(String msg) {
     final now = TimeOfDay.now();
     final line =
         "[${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}] $msg";
+    if (!mounted) return;
     setState(() => _logs.insert(0, line));
   }
 
   String get _countryCode => _countryCtrl.text.trim();
   String get _email => _emailCtrl.text.trim();
   String get _password => _passCtrl.text;
+  String get _code => _codeCtrl.text.trim();
 
-<<<<<<< HEAD
-  bool get _canRegister =>
-      _sdkReady &&
-      !_busyRegister &&
-      _countryCode.isNotEmpty &&
-      _email.isNotEmpty &&
-      _password.isNotEmpty;
-=======
   bool get _canInit => !_busyInit;
->>>>>>> cc30e20 (fixed gradle problems)
 
   bool get _canLogin =>
       _sdkReady &&
@@ -87,9 +67,20 @@ class _TuyaTestPageState extends State<TuyaTestPage> {
       _password.isNotEmpty;
 
   bool get _canLogout => _sdkReady && _loggedIn && !_busyLogout;
-<<<<<<< HEAD
-  bool get _canGetHomes => _sdkReady && _loggedIn && !_busyHomes;
-=======
+
+  bool get _canSendCode =>
+      _sdkReady &&
+      !_busySendCode &&
+      _countryCode.isNotEmpty &&
+      _email.isNotEmpty;
+
+  bool get _canRegister =>
+      _sdkReady &&
+      !_busyRegister &&
+      _countryCode.isNotEmpty &&
+      _email.isNotEmpty &&
+      _password.isNotEmpty &&
+      _code.isNotEmpty;
 
   bool get _canLoadHomes => _sdkReady && _loggedIn && !_busyHomes;
 
@@ -108,21 +99,15 @@ class _TuyaTestPageState extends State<TuyaTestPage> {
       !_busyOpenZigbee &&
       _selectedHomeId != null &&
       _gwIdCtrl.text.trim().isNotEmpty;
->>>>>>> cc30e20 (fixed gradle problems)
 
   Future<void> _refreshLoginStatus() async {
     try {
       final status = await TuyaPlatform.isLoggedIn();
+      if (!mounted) return;
       setState(() => _loggedIn = status);
-<<<<<<< HEAD
-      _log("Login status updated: ${status ? "LOGGED IN" : "LOGGED OUT"}");
-    } catch (e) {
-      _log("Login status check error: $e");
-=======
       _log("Login status: ${status ? "LOGGED IN" : "LOGGED OUT"}");
     } catch (e) {
       _log("Login status error: $e");
->>>>>>> cc30e20 (fixed gradle problems)
     }
   }
 
@@ -131,18 +116,38 @@ class _TuyaTestPageState extends State<TuyaTestPage> {
     _log("Init SDK started");
     try {
       await TuyaPlatform.initSdk();
+      if (!mounted) return;
       setState(() => _sdkReady = true);
       _log("✅ Init SDK success");
       await _refreshLoginStatus();
     } catch (e) {
       _log("❌ Init SDK error: $e");
+      if (!mounted) return;
       setState(() => _sdkReady = false);
     } finally {
+      if (!mounted) return;
       setState(() => _busyInit = false);
     }
   }
 
-<<<<<<< HEAD
+  Future<void> _sendEmailCode() async {
+    setState(() => _busySendCode = true);
+    _log("Send email code started");
+    try {
+      await TuyaPlatform.sendEmailCode(
+        countryCode: _countryCode,
+        email: _email,
+        type: 1, // usually 1 = register
+      );
+      _log("✅ Code sent (check your email)");
+    } catch (e) {
+      _log("❌ Send code error: $e");
+    } finally {
+      if (!mounted) return;
+      setState(() => _busySendCode = false);
+    }
+  }
+
   Future<void> _register() async {
     setState(() => _busyRegister = true);
     _log("Register started");
@@ -151,11 +156,13 @@ class _TuyaTestPageState extends State<TuyaTestPage> {
         countryCode: _countryCode,
         email: _email,
         password: _password,
+        code: _code,
       );
-      _log("✅ Register success");
+      _log("✅ Register success (now try login)");
     } catch (e) {
       _log("❌ Register error: $e");
     } finally {
+      if (!mounted) return;
       setState(() => _busyRegister = false);
     }
   }
@@ -163,37 +170,20 @@ class _TuyaTestPageState extends State<TuyaTestPage> {
   Future<void> _login() async {
     setState(() => _busyLogin = true);
     _log("Login started");
-
-=======
-  Future<void> _login() async {
-    setState(() => _busyLogin = true);
-    _log("Login started");
->>>>>>> cc30e20 (fixed gradle problems)
     try {
+      // loginEmail() is a backward-compatible alias that calls loginByEmail internally
       await TuyaPlatform.loginEmail(
         countryCode: _countryCode,
         email: _email,
         password: _password,
       );
-<<<<<<< HEAD
-
-      // ✅ IMPORTANT:
-      // Even if native login state updates slightly later,
-      // we enable the UI immediately after success.
-      setState(() => _loggedIn = true);
-
       _log("✅ Login success");
-
-      // Re-check shortly after so UI matches native state.
-      await Future.delayed(const Duration(milliseconds: 400));
-=======
-      _log("✅ Login success");
->>>>>>> cc30e20 (fixed gradle problems)
       await _refreshLoginStatus();
     } catch (e) {
       _log("❌ Login error: $e");
       await _refreshLoginStatus();
     } finally {
+      if (!mounted) return;
       setState(() => _busyLogin = false);
     }
   }
@@ -203,42 +193,32 @@ class _TuyaTestPageState extends State<TuyaTestPage> {
     _log("Logout started");
     try {
       await TuyaPlatform.logout();
+      if (!mounted) return;
       setState(() {
         _loggedIn = false;
         _homes = [];
-<<<<<<< HEAD
-=======
         _selectedHomeId = null;
         _selectedHomeName = null;
         _gwIdCtrl.clear();
->>>>>>> cc30e20 (fixed gradle problems)
       });
       _log("✅ Logout success");
       await _refreshLoginStatus();
     } catch (e) {
       _log("❌ Logout error: $e");
     } finally {
+      if (!mounted) return;
       setState(() => _busyLogout = false);
     }
   }
 
-<<<<<<< HEAD
-  Future<void> _getHomes() async {
-    setState(() => _busyHomes = true);
-    _log("Get homes started");
-=======
   Future<void> _loadHomes({bool autoSelectFirst = true}) async {
     setState(() => _busyHomes = true);
     _log("Load homes started");
->>>>>>> cc30e20 (fixed gradle problems)
     try {
       final homes = await TuyaPlatform.getHomeList();
+      if (!mounted) return;
       setState(() => _homes = homes);
       _log("✅ Homes loaded: ${homes.length}");
-<<<<<<< HEAD
-    } catch (e) {
-      _log("❌ Get homes error: $e");
-=======
 
       if (autoSelectFirst && homes.isNotEmpty) {
         final first = homes.first;
@@ -250,14 +230,12 @@ class _TuyaTestPageState extends State<TuyaTestPage> {
       }
     } catch (e) {
       _log("❌ Load homes error: $e");
->>>>>>> cc30e20 (fixed gradle problems)
     } finally {
+      if (!mounted) return;
       setState(() => _busyHomes = false);
     }
   }
 
-<<<<<<< HEAD
-=======
   Future<void> _createHome() async {
     setState(() => _busyCreateHome = true);
     _log("Create home started");
@@ -281,24 +259,20 @@ class _TuyaTestPageState extends State<TuyaTestPage> {
 
       await _loadHomes(autoSelectFirst: false);
 
-      // Select the created home if it exists in list
       final match = _homes.where(
         (h) => (h["homeId"] as num).toInt() == newHomeId,
       );
-      if (match.isNotEmpty) {
-        setState(() {
-          _selectedHomeId = newHomeId;
-          _selectedHomeName = (match.first["name"] ?? "Home").toString();
-        });
-      } else {
-        setState(() {
-          _selectedHomeId = newHomeId;
-          _selectedHomeName = newHomeName;
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        _selectedHomeId = newHomeId;
+        _selectedHomeName = match.isNotEmpty
+            ? (match.first["name"] ?? "Home").toString()
+            : newHomeName;
+      });
     } catch (e) {
       _log("❌ Create home error: $e");
     } finally {
+      if (!mounted) return;
       setState(() => _busyCreateHome = false);
     }
   }
@@ -313,15 +287,14 @@ class _TuyaTestPageState extends State<TuyaTestPage> {
     try {
       await TuyaPlatform.openAddGateway(homeId: homeId);
       _log("✅ Add Gateway UI opened (follow Tuya UI steps)");
-      _log(
-        "Tip: After gateway is added, copy its devId and paste it below for Zigbee scan.",
-      );
+      _log("Tip: After gateway is added, copy its devId and paste it below.");
     } catch (e) {
       _log("❌ Open Add Gateway UI error: $e");
       _log(
-        "If error is MissingPluginException: make sure BizBundle dependency is enabled and Gradle sync succeeds.",
+        "If MissingPluginException: BizBundle not connected on Android side.",
       );
     } finally {
+      if (!mounted) return;
       setState(() => _busyOpenGw = false);
     }
   }
@@ -342,9 +315,10 @@ class _TuyaTestPageState extends State<TuyaTestPage> {
     } catch (e) {
       _log("❌ Open Zigbee UI error: $e");
       _log(
-        "If error is MissingPluginException: BizBundle dependency still not available.",
+        "If MissingPluginException: BizBundle not connected on Android side.",
       );
     } finally {
+      if (!mounted) return;
       setState(() => _busyOpenZigbee = false);
     }
   }
@@ -358,34 +332,23 @@ class _TuyaTestPageState extends State<TuyaTestPage> {
     } catch (e) {
       _log("❌ Stop activator error: $e");
     } finally {
+      if (!mounted) return;
       setState(() => _busyStop = false);
     }
   }
 
->>>>>>> cc30e20 (fixed gradle problems)
   @override
   void dispose() {
     _countryCtrl.dispose();
     _emailCtrl.dispose();
     _passCtrl.dispose();
-<<<<<<< HEAD
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final statusColor = _sdkReady
-        ? (_loggedIn ? Colors.green : Colors.orange)
-        : Colors.red;
-
-=======
+    _codeCtrl.dispose();
 
     _homeNameCtrl.dispose();
     _geoNameCtrl.dispose();
     _roomsCtrl.dispose();
 
     _gwIdCtrl.dispose();
-
     super.dispose();
   }
 
@@ -402,213 +365,11 @@ class _TuyaTestPageState extends State<TuyaTestPage> {
     final statusColor = !_sdkReady
         ? Colors.red
         : (_loggedIn ? Colors.green : Colors.orange);
->>>>>>> cc30e20 (fixed gradle problems)
     final statusText = !_sdkReady
         ? "SDK NOT READY"
         : (_loggedIn ? "LOGGED IN" : "LOGGED OUT");
 
     return Scaffold(
-<<<<<<< HEAD
-      appBar: AppBar(title: const Text("Tuya Test Console"), centerTitle: true),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            // Status Card
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: statusColor.withOpacity(0.4)),
-                color: statusColor.withOpacity(0.08),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.circle, color: statusColor, size: 14),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      statusText,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        color: statusColor,
-                      ),
-                    ),
-                  ),
-                  ElevatedButton.icon(
-                    onPressed: _busyInit ? null : _initSdk,
-                    icon: _busyInit
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.power),
-                    label: const Text("Init SDK"),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
-            // Inputs
-            TextField(
-              controller: _countryCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: "Country Code",
-                hintText: "Example: 968 (Oman), 971 (UAE), 966 (SA)",
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _emailCtrl,
-              keyboardType: TextInputType.emailAddress,
-              decoration: const InputDecoration(
-                labelText: "Email",
-                hintText: "example@email.com",
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _passCtrl,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: "Password",
-                border: OutlineInputBorder(),
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
-            // Actions
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: _canRegister ? _register : null,
-                    child: _busyRegister
-                        ? const SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text("Register Email"),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: _canLogin ? _login : null,
-                    child: _busyLogin
-                        ? const SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text("Login"),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: _canLogout ? _logout : null,
-                    child: _busyLogout
-                        ? const SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text("Logout"),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: _canGetHomes ? _getHomes : null,
-                    child: _busyHomes
-                        ? const SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text("Get Homes"),
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 16),
-
-            // Homes
-            if (_homes.isNotEmpty) ...[
-              Text(
-                "Homes (${_homes.length})",
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 8),
-              ..._homes.map((h) {
-                return Card(
-                  child: ListTile(
-                    leading: const Icon(Icons.home),
-                    title: Text("${h["name"] ?? "Home"}"),
-                    subtitle: Text("homeId: ${h["homeId"]}"),
-                  ),
-                );
-              }),
-              const SizedBox(height: 8),
-            ],
-
-            // Logs
-            Text(
-              "Logs",
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
-            Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.black12),
-              ),
-              child: ListView.separated(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: _logs.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
-                itemBuilder: (context, index) {
-                  final line = _logs[index];
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
-                    ),
-                    child: Text(
-                      line,
-                      style: const TextStyle(
-                        fontFamily: "monospace",
-                        fontSize: 12,
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-
-            const SizedBox(height: 20),
-          ],
-        ),
-=======
       appBar: AppBar(
         title: const Text("Tuya Console"),
         centerTitle: true,
@@ -713,6 +474,47 @@ class _TuyaTestPageState extends State<TuyaTestPage> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Text("Logout"),
+                ),
+              ),
+            ],
+          ),
+
+          _sectionTitle("1.5) Register (Email Code)"),
+          TextField(
+            controller: _codeCtrl,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: "Verification Code",
+              hintText: "Paste the code you received by email",
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _canSendCode ? _sendEmailCode : null,
+                  child: _busySendCode
+                      ? const SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text("Send Code"),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: _canRegister ? _register : null,
+                  child: _busyRegister
+                      ? const SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text("Register"),
                 ),
               ),
             ],
@@ -873,7 +675,6 @@ class _TuyaTestPageState extends State<TuyaTestPage> {
             ),
           ),
         ],
->>>>>>> cc30e20 (fixed gradle problems)
       ),
     );
   }
