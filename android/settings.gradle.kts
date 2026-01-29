@@ -1,35 +1,21 @@
-import org.gradle.api.initialization.resolve.RepositoriesMode
-
 pluginManagement {
     val flutterSdkPath = run {
-        val properties = Properties()
-        file("local.properties").inputStream().use { properties.load(it) }
-        properties.getProperty("flutter.sdk") ?: error("flutter.sdk not set in local.properties")
+        val properties = java.util.Properties()
+        val localProps = file("local.properties")
+        if (!localProps.exists()) {
+            error("android/local.properties not found")
+        }
+        localProps.inputStream().use { properties.load(it) }
+        properties.getProperty("flutter.sdk")
+            ?: error("flutter.sdk not set in android/local.properties")
     }
 
     includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
-}
-
-dependencyResolutionManagement {
-    // ✅ Works on your Gradle version (unlike ALLOW_PROJECT_REPOS)
-    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
 
     repositories {
         google()
         mavenCentral()
-        maven(url = "https://storage.googleapis.com/download.flutter.io")
-
-        // Tuya repos
-        maven(url = "https://maven-other.tuya.com/repository/maven-releases/")
-        maven(url = "https://maven-other.tuya.com/repository/maven-commercial-releases/")
-        maven(url = "https://maven-other.tuya.com/repository/maven-snapshots/")
-        maven(url = "https://maven-other.tuya.com/repository/maven-commercial-snapshots/")
-
-        // Huawei repo
-        maven(url = "https://developer.huawei.com/repo/")
-
-        // Optional
-        maven(url = "https://jitpack.io")
+        gradlePluginPortal()
     }
 }
 
@@ -39,18 +25,18 @@ plugins {
     id("org.jetbrains.kotlin.android") version "1.9.22" apply false
 }
 
-
 dependencyResolutionManagement {
-    repositoriesMode.set(org.gradle.api.initialization.resolve.RepositoriesMode.PREFER_SETTINGS)
+    repositoriesMode.set(
+        org.gradle.api.initialization.resolve.RepositoriesMode.PREFER_SETTINGS
+    )
     repositories {
         google()
         mavenCentral()
-
         maven { url = uri("https://storage.googleapis.com/download.flutter.io") }
 
+        // Tuya / ThingClips repos
         maven { url = uri("https://maven-other.tuya.com/repository/maven-releases/") }
         maven { url = uri("https://maven-other.tuya.com/repository/maven-commercial-releases/") }
-        maven { url = uri("https://maven-other.tuya.com/repository/maven-snapshots/") }
 
         maven { url = uri("https://jitpack.io") }
     }
