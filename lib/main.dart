@@ -4,7 +4,10 @@ import 'tuya/tuya_platform.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await TuyaPlatform.initSdk(); // must exist + must be awaited
+
+  // ✅ Auto init at app launch (no UI button)
+  await TuyaPlatform.initSdk();
+
   runApp(const MyApp());
 }
 

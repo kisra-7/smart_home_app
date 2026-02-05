@@ -1,18 +1,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     package="com.example.alrawi_app">
 
-    <!-- Network access (Tuya needs internet) -->
     <uses-permission android:name="android.permission.INTERNET" />
-
-    <!-- Common permissions for Tuya / networking -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CAMERA" />
 
     <application
-        android:name="${applicationName}"
+        android:name=".MainApplication"
         android:label="alrawi_app"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        tools:replace="android:name,android:label">
 
         <activity
             android:name=".MainActivity"
@@ -37,6 +37,7 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
     </application>
 
 </manifest>

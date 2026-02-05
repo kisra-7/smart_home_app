@@ -1,0 +1,11 @@
+<resources>
+    <!-- Enable QR scan in pairing flow -->
+    <bool name="is_scan_support">true</bool>
+
+    <!-- Optional: allow BLE support in pairing UI -->
+    <bool name="is_need_ble_support">true</bool>
+    <bool name="is_need_blemesh_support">true</bool>
+
+    <!-- Optional: hotspot ssid prefix -->
+    <string name="ap_mode_ssid">SmartLife</string>
+</resources>
