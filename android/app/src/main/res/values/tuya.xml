@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- TODO: replace with your real values from Tuya IoT Platform -->
+    <string name="tuya_app_key">n7haetp3sx5appekxtfn</string>
+    <string name="tuya_app_secret">fcekuqjd38rqmutnav33u8u9y848p8g5</string>
+</resources>

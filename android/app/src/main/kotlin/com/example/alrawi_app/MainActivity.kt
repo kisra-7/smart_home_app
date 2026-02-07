@@ -9,7 +9,11 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        tuyaBridge = TuyaBridge(this, this).also { it.attachToEngine(flutterEngine) }
+
+        tuyaBridge = TuyaBridge(
+            context = this,
+            activity = this
+        ).also { it.attachToEngine(flutterEngine) }
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {

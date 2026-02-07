@@ -16,7 +16,7 @@ android {
         versionName = flutter.versionName
     }
 
-    // ✅ Dependency substitutions (keep as you had)
+    // ✅ Dependency substitutions
     configurations.configureEach {
         resolutionStrategy.dependencySubstitution {
             substitute(module("com.google.android:flexbox:1.1.1"))
@@ -35,15 +35,13 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
-android {
-    // ... keep your existing config
 
+    // ✅ Disable ABI splits (keep single universal debug apk)
     splits {
         abi {
             isEnable = false
         }
     }
-}
 
     buildTypes {
         release {
@@ -52,36 +50,27 @@ android {
         }
     }
 
-    // If you use local .aar (security-algorithm.aar) put it in android/app/libs
+    // ✅ Local AARs in android/app/libs
     repositories {
-        flatDir {
-            dirs("libs")
-        }
+        flatDir { dirs("libs") }
     }
 
-    // ✅ AGP 8.x packaging DSL (replaces packagingOptions)
+    // ✅ AGP 8.x packaging DSL
     packaging {
         jniLibs {
-            // same as your pickFirst("lib/*/libc++_shared.so")
             pickFirsts += setOf("lib/*/libc++_shared.so")
         }
-       resources {
-    // ✅ strongest fix for duplicate Java resources
-    pickFirsts += setOf(
-        "META-INF/INDEX.LIST"
-    )
-
-    // keep these too (harmless + useful)
-    excludes += setOf(
-        "META-INF/DEPENDENCIES",
-        "META-INF/LICENSE",
-        "META-INF/LICENSE.txt",
-        "META-INF/NOTICE",
-        "META-INF/NOTICE.txt",
-        "META-INF/*.kotlin_module"
-    )
-}
-
+        resources {
+            pickFirsts += setOf("META-INF/INDEX.LIST")
+            excludes += setOf(
+                "META-INF/DEPENDENCIES",
+                "META-INF/LICENSE",
+                "META-INF/LICENSE.txt",
+                "META-INF/NOTICE",
+                "META-INF/NOTICE.txt",
+                "META-INF/*.kotlin_module"
+            )
+        }
     }
 }
 
@@ -95,21 +84,13 @@ configurations.all {
 }
 
 dependencies {
-    // Core Home SDK
+    // ✅ Tuya security AAR (must exist at android/app/libs/security-algorithm-1.0.0-beta.aar)
+    implementation(files("libs/security-algorithm-1.0.0-beta.aar"))
+
     implementation("com.thingclips.smart:thingsmart:6.11.6")
-
-    // UI BizBundle platform (keep versions consistent with SDK as per Tuya docs)
     implementation(enforcedPlatform("com.thingclips.smart:thingsmart-BizBundlesBom:6.11.6"))
-
-    // Device Pairing UI BizBundle (SmartLife-like Add Device flow)
     implementation("com.thingclips.smart:thingsmart-bizbundle-device_activator")
-
-    // QR Code scanning BizBundle (Tuya scan page)
     implementation("com.thingclips.smart:thingsmart-bizbundle-qrcode_mlkit")
-
-    // If Tuya asked you to add security-algorithm.aar:
-    // put it at android/app/libs/security-algorithm.aar then enable:
-    // implementation(files("libs/security-algorithm.aar"))
 }
 
 flutter {

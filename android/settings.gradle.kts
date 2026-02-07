@@ -46,6 +46,13 @@ dependencyResolutionManagement {
     maven { url = uri("https://maven-other.tuya.com/repository/maven-commercial-releases/") }
 
     maven { url = uri("https://jitpack.io") }
+
+    flatDir {
+        dirs("libs")
+    }
+
+    maven { url = uri("file://${rootDir}/app/libs") }
+
 }
 
 }
