@@ -1,12 +1,17 @@
-import 'package:alrawi_app/pages/tuya_test_pages.dart';
+import 'package:alrawi_app/pages/auth_page.dart';
+import 'package:alrawi_app/tuya/tuya_platform.dart';
 import 'package:flutter/material.dart';
-import 'tuya/tuya_platform.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // ✅ Auto init at app launch (no UI button)
-  await TuyaPlatform.initSdk();
+  // No UI snackbar. Only debug logs.
+  try {
+    await TuyaPlatform.initSdk();
+    debugPrint("✅ Tuya initSdk OK (from Dart)");
+  } catch (e) {
+    debugPrint("❌ Tuya initSdk failed (from Dart): $e");
+  }
 
   runApp(const MyApp());
 }
@@ -16,9 +21,14 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: TuyaTestPage(),
+      title: "Alrawi Smart Home",
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0B84FF)),
+      ),
+      home: const AuthPage(),
     );
   }
 }

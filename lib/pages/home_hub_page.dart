@@ -1,43 +1,27 @@
-// lib/pages/home_page.dart
-import 'package:alrawi_app/tuya/tuya_platform.dart';
 import 'package:flutter/material.dart';
+import 'tuya_platform.dart';
+import 'auth_page.dart';
 
-class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+class HomeHubPage extends StatefulWidget {
+  const HomeHubPage({super.key});
 
   @override
-  State<HomePage> createState() => _HomePageState();
+  State<HomeHubPage> createState() => _HomeHubPageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomeHubPageState extends State<HomeHubPage> {
   bool _busy = false;
-
   List<Map<String, dynamic>> _homes = [];
-  int? _selectedHomeId;
-  String? _selectedHomeName;
+  int? _homeId;
+  String _homeName = "Home";
 
-  // Create home inputs
-  final _homeNameCtrl = TextEditingController(text: "My Home");
-  final _geoNameCtrl = TextEditingController(text: "Oman");
-  final _roomsCtrl = TextEditingController(text: "Living Room,Bedroom");
-
-  final List<String> _logs = [];
-
-  void _log(String msg) {
-    final now = TimeOfDay.now();
-    final line =
-        "[${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}] $msg";
-    if (!mounted) return;
-    setState(() => _logs.insert(0, line));
-  }
-
-  Future<void> _run(Future<void> Function() action) async {
+  Future<void> _run(Future<void> Function() fn) async {
     if (!mounted) return;
     setState(() => _busy = true);
     try {
-      await action();
+      await fn();
     } catch (e) {
-      _log("❌ Error: $e");
+      debugPrint("❌ HomeHub error: $e");
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -48,79 +32,60 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _loadHomes({bool autoSelectFirst = true}) => _run(() async {
-    _log("Loading homes...");
+  Future<void> _loadHomes() => _run(() async {
+    debugPrint("🏠 loading homes...");
     final homes = await TuyaPlatform.getHomeList();
-    if (!mounted) return;
-    setState(() => _homes = homes);
-
-    _log("✅ Homes loaded: ${homes.length}");
-
-    if (autoSelectFirst && homes.isNotEmpty) {
-      final first = homes.first;
-      setState(() {
-        _selectedHomeId = (first["homeId"] as num).toInt();
-        _selectedHomeName = (first["name"] ?? "Home").toString();
-      });
-      _log("Selected home: $_selectedHomeName ($_selectedHomeId)");
-    }
-  });
-
-  Future<void> _createHome() => _run(() async {
-    final name = _homeNameCtrl.text.trim();
-    if (name.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Please enter a home name")));
-      return;
-    }
-
-    final rooms = _roomsCtrl.text
-        .split(",")
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
-
-    _log("Creating home...");
-    final created = await TuyaPlatform.createHome(
-      name: name,
-      geoName: _geoNameCtrl.text.trim(),
-      rooms: rooms,
-    );
-
-    final newHomeId = (created["homeId"] as num).toInt();
-    final newHomeName = (created["name"] ?? name).toString();
-
-    _log("✅ Home created: $newHomeName (ID: $newHomeId)");
-
-    // Refresh list and select created home
-    await _loadHomes(autoSelectFirst: false);
+    debugPrint("✅ homes: ${homes.length}");
     if (!mounted) return;
     setState(() {
-      _selectedHomeId = newHomeId;
-      _selectedHomeName = newHomeName;
+      _homes = homes;
+      if (_homes.isNotEmpty) {
+        final first = _homes.first;
+        _homeId = (first["homeId"] as num).toInt();
+        _homeName = (first["name"] ?? "Home").toString();
+      }
     });
-  });
 
-  Future<void> _openAddDevice() => _run(() async {
-    _log("Opening Add Device UI...");
-    // Smart Life style flow (Android handles UI)
-    await TuyaPlatform.openAddGateway();
-    _log("✅ Add Device UI opened");
-  });
-
-  Future<void> _openQrScan() => _run(() async {
-    _log("Opening QR scan...");
-    await TuyaPlatform.openQrScan();
-    _log("✅ QR scan opened");
+    // Auto-create a home if none exist (so Add Device works immediately)
+    if (_homes.isEmpty) {
+      debugPrint("➕ no homes, creating default home...");
+      final created = await TuyaPlatform.createHome(
+        name: "My Home",
+        geoName: "Oman",
+        rooms: const ["Living Room"],
+      );
+      debugPrint("✅ created home: $created");
+      final refreshed = await TuyaPlatform.getHomeList();
+      if (!mounted) return;
+      setState(() {
+        _homes = refreshed;
+        if (_homes.isNotEmpty) {
+          final first = _homes.first;
+          _homeId = (first["homeId"] as num).toInt();
+          _homeName = (first["name"] ?? "Home").toString();
+        }
+      });
+    }
   });
 
   Future<void> _logout() => _run(() async {
-    _log("Logging out...");
     await TuyaPlatform.logout();
-    _log("✅ Logged out");
     if (!mounted) return;
-    Navigator.of(context).pop(); // back to login page
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const AuthPage()),
+      (_) => false,
+    );
+  });
+
+  Future<void> _addDevice() => _run(() async {
+    debugPrint("➕ open add device...");
+    await TuyaPlatform.openAddGateway();
+  });
+
+  Future<void> _scanQr() => _run(() async {
+    debugPrint("📷 open qr scan...");
+    await TuyaPlatform.openQrScan();
   });
 
   @override
@@ -130,55 +95,28 @@ class _HomePageState extends State<HomePage> {
   }
 
   @override
-  void dispose() {
-    _homeNameCtrl.dispose();
-    _geoNameCtrl.dispose();
-    _roomsCtrl.dispose();
-    super.dispose();
-  }
-
-  Widget _card({required Widget child}) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.black12),
-        color: Colors.white,
-        boxShadow: const [
-          BoxShadow(
-            blurRadius: 14,
-            offset: Offset(0, 6),
-            color: Color(0x11000000),
-          ),
-        ],
-      ),
-      child: child,
-    );
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF6F7FB),
+      backgroundColor: const Color(0xFFF5F7FB),
       appBar: AppBar(
-        title: const Text("Home"),
-        centerTitle: true,
+        title: Text(_homeId == null ? "Alrawi" : "Alrawi • $_homeName"),
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0,
         actions: [
           IconButton(
-            onPressed: _busy ? null : () => _loadHomes(autoSelectFirst: false),
+            onPressed: _busy ? null : _loadHomes,
             icon: const Icon(Icons.refresh),
-            tooltip: "Refresh homes",
           ),
           IconButton(
             onPressed: _busy ? null : _logout,
             icon: const Icon(Icons.logout),
-            tooltip: "Logout",
           ),
         ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _busy ? null : _addDevice,
+        child: const Icon(Icons.add),
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -186,11 +124,11 @@ class _HomePageState extends State<HomePage> {
           _card(
             child: Row(
               children: [
+                const Icon(Icons.home_rounded),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    _selectedHomeId == null
-                        ? "No home selected"
-                        : "Home: ${_selectedHomeName ?? "Home"} (ID: $_selectedHomeId)",
+                    _homeId == null ? "No home selected" : "Home ID: $_homeId",
                     style: const TextStyle(fontWeight: FontWeight.w900),
                   ),
                 ),
@@ -203,6 +141,7 @@ class _HomePageState extends State<HomePage> {
               ],
             ),
           ),
+          const SizedBox(height: 12),
 
           _card(
             child: Column(
@@ -210,20 +149,19 @@ class _HomePageState extends State<HomePage> {
               children: [
                 const Text(
                   "Homes",
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
                 ),
                 const SizedBox(height: 10),
-
                 if (_homes.isEmpty)
-                  const Text("No homes found. Create one below.")
+                  const Text("No homes found.")
                 else
                   DropdownButtonFormField<int>(
-                    value: _selectedHomeId,
+                    value: _homeId,
                     items: _homes
                         .map(
                           (h) => DropdownMenuItem<int>(
                             value: (h["homeId"] as num).toInt(),
-                            child: Text("${h["name"]} (${h["homeId"]})"),
+                            child: Text("${h["name"]}"),
                           ),
                         )
                         .toList(),
@@ -235,124 +173,77 @@ class _HomePageState extends State<HomePage> {
                               (h) => (h["homeId"] as num).toInt() == v,
                             );
                             setState(() {
-                              _selectedHomeId = v;
-                              _selectedHomeName = (match["name"] ?? "Home")
-                                  .toString();
+                              _homeId = v;
+                              _homeName = (match["name"] ?? "Home").toString();
                             });
-                            _log(
-                              "Selected home: $_selectedHomeName ($_selectedHomeId)",
-                            );
                           },
                     decoration: const InputDecoration(
-                      labelText: "Selected Home",
                       border: OutlineInputBorder(),
+                      labelText: "Select home",
                     ),
                   ),
-
-                const SizedBox(height: 12),
-                const Divider(),
-                const SizedBox(height: 12),
-
-                const Text(
-                  "Create Home",
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _homeNameCtrl,
-                  decoration: const InputDecoration(
-                    labelText: "Home Name",
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _geoNameCtrl,
-                  decoration: const InputDecoration(
-                    labelText: "City / Geo Name (optional)",
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _roomsCtrl,
-                  decoration: const InputDecoration(
-                    labelText: "Rooms (comma separated)",
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                ElevatedButton.icon(
-                  onPressed: _busy ? null : _createHome,
-                  icon: const Icon(Icons.add_home),
-                  label: const Text("Create Home"),
-                ),
               ],
             ),
           ),
 
+          const SizedBox(height: 12),
           _card(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  "Add Devices",
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                  "Add device (Tuya flow)",
+                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
                 ),
                 const SizedBox(height: 10),
-                ElevatedButton.icon(
-                  onPressed: _busy ? null : _openAddDevice,
-                  icon: const Icon(Icons.add),
-                  label: const Text("Open Add Device"),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton.icon(
+                    onPressed: _busy ? null : _addDevice,
+                    icon: const Icon(Icons.add),
+                    label: const Text("Add Device / Gateway"),
+                  ),
                 ),
                 const SizedBox(height: 10),
-                OutlinedButton.icon(
-                  onPressed: _busy ? null : _openQrScan,
-                  icon: const Icon(Icons.qr_code_scanner),
-                  label: const Text("Scan QR Code"),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: OutlinedButton.icon(
+                    onPressed: _busy ? null : _scanQr,
+                    icon: const Icon(Icons.qr_code_scanner),
+                    label: const Text("Scan QR Code"),
+                  ),
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  "Use the Tuya/Smart Life pairing flow to add gateways and Zigbee sub-devices.",
+                  "This opens Tuya’s Device Pairing UI BizBundle (Wi-Fi / QR / gateway flows).",
                   style: TextStyle(color: Colors.black54),
                 ),
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
 
-          _card(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  "Logs",
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
-                ),
-                const SizedBox(height: 10),
-                if (_logs.isEmpty)
-                  const Text("No logs yet.")
-                else
-                  ListView.separated(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: _logs.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
-                    itemBuilder: (context, i) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: Text(
-                        _logs[i],
-                        style: const TextStyle(
-                          fontFamily: "monospace",
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
+  Widget _card({required Widget child}) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.black12),
+        boxShadow: const [
+          BoxShadow(
+            blurRadius: 16,
+            offset: Offset(0, 8),
+            color: Color(0x11000000),
           ),
         ],
       ),
+      child: child,
     );
   }
 }

@@ -10,15 +10,15 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        tuyaBridge = TuyaBridge(
-            context = this,
-            activity = this
-        ).also { it.attachToEngine(flutterEngine) }
+        // ✅ Register our MethodChannel here
+        tuyaBridge = TuyaBridge(applicationContext, this).apply {
+            attachToEngine(flutterEngine)
+        }
     }
 
-    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+    override fun onDestroy() {
         tuyaBridge?.detach()
         tuyaBridge = null
-        super.cleanUpFlutterEngine(flutterEngine)
+        super.onDestroy()
     }
 }

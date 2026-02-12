@@ -13,18 +13,21 @@ class MainApplication : Application() {
         val (appKey, appSecret) = readThingKeysFromManifest()
 
         if (appKey.isNullOrBlank() || appSecret.isNullOrBlank()) {
-            // This is exactly the crash you saw before, so fail early with clear log
-            throw RuntimeException("appkey and appSecret cannot be null (check AndroidManifest meta-data THING_APP_KEY / THING_APP_SECRET)")
+            throw RuntimeException(
+                "THING_APP_KEY / THING_APP_SECRET missing in AndroidManifest.xml"
+            )
         }
 
-        // ✅ Initialize Thing/Tuya SDK
         ThingHomeSdk.init(this, appKey, appSecret)
-        Log.d("MainApplication", "ThingHomeSdk initialized")
+        Log.d("MainApplication", "ThingHomeSdk initialized with key=$appKey")
     }
 
     private fun readThingKeysFromManifest(): Pair<String?, String?> {
         return try {
-            val appInfo = packageManager.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
+            val appInfo = packageManager.getApplicationInfo(
+                packageName,
+                PackageManager.GET_META_DATA
+            )
             val md = appInfo.metaData
             val key = md?.getString("THING_APP_KEY")
             val secret = md?.getString("THING_APP_SECRET")
