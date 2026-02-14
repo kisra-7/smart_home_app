@@ -1,5 +1,5 @@
-import 'package:alrawi_app/tuya/tuya_platform.dart';
 import 'package:flutter/material.dart';
+import '../tuya/tuya_platform.dart';
 import 'home_hub_page.dart';
 
 class AuthPage extends StatefulWidget {
@@ -47,7 +47,14 @@ class _AuthPageState extends State<AuthPage> {
       final loggedIn = await TuyaPlatform.isLoggedIn();
       debugPrint("🔎 Auto login check => $loggedIn");
       if (!mounted) return;
+
       if (loggedIn) {
+        await TuyaPlatform.ensureHome(
+          name: "My Home",
+          geoName: "Oman",
+          rooms: const ["Living Room"],
+        );
+        if (!mounted) return;
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const HomeHubPage()),
@@ -71,6 +78,33 @@ class _AuthPageState extends State<AuthPage> {
     _passCtrl.dispose();
     _codeCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _afterLoginEnsureHomeAndGo() async {
+    final info = await TuyaPlatform.ensureHome(
+      name: "My Home",
+      geoName: "Oman",
+      rooms: const ["Living Room"],
+    );
+
+    final created = info["created"] == true;
+    final homeId = info["homeId"];
+    debugPrint("🏠 ensureHome => created=$created homeId=$homeId");
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          created ? "Home created (ID: $homeId)" : "Home found (ID: $homeId)",
+        ),
+      ),
+    );
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => const HomeHubPage()),
+    );
   }
 
   @override
@@ -119,7 +153,6 @@ class _AuthPageState extends State<AuthPage> {
                       ),
                   ],
                 ),
-
                 const SizedBox(height: 28),
                 Text(
                   title,
@@ -136,7 +169,6 @@ class _AuthPageState extends State<AuthPage> {
                   style: const TextStyle(color: Colors.black54),
                 ),
                 const SizedBox(height: 18),
-
                 _card(
                   child: Column(
                     children: [
@@ -176,7 +208,6 @@ class _AuthPageState extends State<AuthPage> {
                           ),
                         ),
                       ),
-
                       if (_registerMode) ...[
                         const SizedBox(height: 12),
                         TextField(
@@ -196,24 +227,21 @@ class _AuthPageState extends State<AuthPage> {
                                     _busy || _country.isEmpty || _email.isEmpty
                                     ? null
                                     : () => _run(() async {
-                                        debugPrint("📩 send code...");
                                         await TuyaPlatform.sendEmailCode(
                                           countryCode: _country,
                                           email: _email,
                                           type: 1,
                                         );
-                                        debugPrint("✅ code sent");
-                                        if (mounted) {
-                                          ScaffoldMessenger.of(
-                                            context,
-                                          ).showSnackBar(
-                                            const SnackBar(
-                                              content: Text(
-                                                "Code sent. Check your email.",
-                                              ),
+                                        if (!mounted) return;
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                              "Code sent. Check your email.",
                                             ),
-                                          );
-                                        }
+                                          ),
+                                        );
                                       }),
                                 child: const Text("Send code"),
                               ),
@@ -229,28 +257,28 @@ class _AuthPageState extends State<AuthPage> {
                                         _code.isEmpty
                                     ? null
                                     : () => _run(() async {
-                                        debugPrint("🆕 register...");
-                                        await TuyaPlatform.registerEmail(
-                                          countryCode: _country,
-                                          email: _email,
-                                          password: _pass,
-                                          code: _code,
-                                        );
-                                        debugPrint(
-                                          "✅ register ok, logging in...",
-                                        );
-                                        await TuyaPlatform.loginByEmail(
-                                          countryCode: _country,
-                                          email: _email,
-                                          password: _pass,
-                                        );
-                                        if (!mounted) return;
-                                        Navigator.pushReplacement(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (_) => const HomeHubPage(),
-                                          ),
-                                        );
+                                        final ok =
+                                            await TuyaPlatform.registerEmail(
+                                              countryCode: _country,
+                                              email: _email,
+                                              password: _pass,
+                                              code: _code,
+                                            );
+                                        if (!ok)
+                                          throw Exception("Register failed");
+
+                                        final logged =
+                                            await TuyaPlatform.loginByEmail(
+                                              countryCode: _country,
+                                              email: _email,
+                                              password: _pass,
+                                            );
+                                        if (!logged)
+                                          throw Exception(
+                                            "Login failed after register",
+                                          );
+
+                                        await _afterLoginEnsureHomeAndGo();
                                       }),
                                 child: const Text("Register"),
                               ),
@@ -270,20 +298,13 @@ class _AuthPageState extends State<AuthPage> {
                                     _pass.isEmpty
                                 ? null
                                 : () => _run(() async {
-                                    debugPrint("🔐 login...");
-                                    await TuyaPlatform.loginByEmail(
+                                    final ok = await TuyaPlatform.loginByEmail(
                                       countryCode: _country,
                                       email: _email,
                                       password: _pass,
                                     );
-                                    debugPrint("✅ login ok");
-                                    if (!mounted) return;
-                                    Navigator.pushReplacement(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) => const HomeHubPage(),
-                                      ),
-                                    );
+                                    if (!ok) throw Exception("Login failed");
+                                    await _afterLoginEnsureHomeAndGo();
                                   }),
                             child: const Text("Sign in"),
                           ),
@@ -292,7 +313,6 @@ class _AuthPageState extends State<AuthPage> {
                     ],
                   ),
                 ),
-
                 const SizedBox(height: 14),
                 Center(
                   child: GestureDetector(

@@ -6,17 +6,21 @@ plugins {
 
 android {
     namespace = "com.example.alrawi_app"
+
+    // Keep Flutter compileSdk (your emulator is API 36 anyway)
     compileSdk = flutter.compileSdkVersion
 
     defaultConfig {
         applicationId = "com.example.alrawi_app"
+
+        // ✅ REQUIRED by Tuya UI BizBundle framework
         minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        targetSdk = 35
+
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
-    // ✅ Dependency substitutions
     configurations.configureEach {
         resolutionStrategy.dependencySubstitution {
             substitute(module("com.google.android:flexbox:1.1.1"))
@@ -36,7 +40,6 @@ android {
         jvmTarget = "17"
     }
 
-    // ✅ Disable ABI splits (keep single universal debug apk)
     splits {
         abi {
             isEnable = false
@@ -50,15 +53,20 @@ android {
         }
     }
 
-    // ✅ Local AARs in android/app/libs
     repositories {
         flatDir { dirs("libs") }
     }
 
-    // ✅ AGP 8.x packaging DSL
     packaging {
         jniLibs {
-            pickFirsts += setOf("lib/*/libc++_shared.so")
+            pickFirsts += setOf(
+                "lib/*/liblog.so",
+                "lib/*/libc++_shared.so",
+                "lib/*/libyuv.so",
+                "lib/*/libopenh264.so",
+                "lib/*/libv8wrapper.so",
+                "lib/*/libv8android.so"
+            )
         }
         resources {
             pickFirsts += setOf("META-INF/INDEX.LIST")
@@ -75,22 +83,34 @@ android {
 }
 
 /**
- * Tuya / ThingClips excludes to avoid SNAPSHOT annotation modules
+ * ✅ IMPORTANT:
+ * Do NOT exclude Thing/Tuya annotation/plugin artifacts globally.
+ * It can break BizBundle/Activator runtime class loading.
  */
-configurations.all {
-    exclude(group = "com.thingclips.smart", module = "thingsmart-modularCampAnno")
-    exclude(group = "com.thingclips.smart", module = "thingplugin-annotation")
-    exclude(group = "com.thingclips.android.module", module = "thingmodule-annotation")
-}
 
 dependencies {
-    // ✅ Tuya security AAR (must exist at android/app/libs/security-algorithm-1.0.0-beta.aar)
+    // Tuya docs commonly require this for BizBundle compatibility
+    implementation("org.apache.ant:ant:1.10.5")
+
+    // (Optional) Your local security AAR (keep only if you actually need it)
     implementation(files("libs/security-algorithm-1.0.0-beta.aar"))
 
+    // ✅ Core Home SDK
     implementation("com.thingclips.smart:thingsmart:6.11.6")
+
+    // ✅ UI BizBundle BOM (pins correct versions)
     implementation(enforcedPlatform("com.thingclips.smart:thingsmart-BizBundlesBom:6.11.6"))
+
+    // ✅ UI BizBundle framework runtime
+    implementation("com.thingclips.smart:thingsmart-bizbundle-basekit")
+    implementation("com.thingclips.smart:thingsmart-bizbundle-bizkit")
+
+    // ✅ Device pairing UI BizBundle
     implementation("com.thingclips.smart:thingsmart-bizbundle-device_activator")
     implementation("com.thingclips.smart:thingsmart-bizbundle-qrcode_mlkit")
+
+    // ✅ Home/Family
+    implementation("com.thingclips.smart:thingsmart-bizbundle-family")
 }
 
 flutter {

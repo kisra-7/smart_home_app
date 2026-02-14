@@ -1,6 +1,6 @@
-import 'package:alrawi_app/pages/auth_page.dart';
-import 'package:alrawi_app/tuya/tuya_platform.dart';
 import 'package:flutter/material.dart';
+import 'pages/auth_page.dart';
+import 'tuya/tuya_platform.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

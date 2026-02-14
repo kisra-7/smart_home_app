@@ -12,7 +12,7 @@ class TuyaPlatform {
     return res == true;
   }
 
-  static Future<Map<String, dynamic>?> loginByEmail({
+  static Future<bool> loginByEmail({
     required String countryCode,
     required String email,
     required String password,
@@ -22,20 +22,7 @@ class TuyaPlatform {
       'email': email.trim(),
       'password': password,
     });
-    if (res == null) return null;
-    return Map<String, dynamic>.from(res as Map);
-  }
-
-  static Future<Map<String, dynamic>?> loginEmail({
-    required String countryCode,
-    required String email,
-    required String password,
-  }) {
-    return loginByEmail(
-      countryCode: countryCode,
-      email: email,
-      password: password,
-    );
+    return res == true;
   }
 
   static Future<void> sendEmailCode({
@@ -50,7 +37,7 @@ class TuyaPlatform {
     });
   }
 
-  static Future<Map<String, dynamic>?> registerEmail({
+  static Future<bool> registerEmail({
     required String countryCode,
     required String email,
     required String password,
@@ -62,8 +49,7 @@ class TuyaPlatform {
       'password': password,
       'code': code.trim(),
     });
-    if (res == null) return null;
-    return Map<String, dynamic>.from(res as Map);
+    return res == true;
   }
 
   static Future<void> logout() async {
@@ -78,8 +64,8 @@ class TuyaPlatform {
 
   static Future<Map<String, dynamic>> createHome({
     required String name,
-    String geoName = "",
-    List<String> rooms = const [],
+    String geoName = "Oman",
+    List<String> rooms = const ["Living Room"],
   }) async {
     final res = await _channel.invokeMethod('createHome', {
       'name': name,
@@ -89,32 +75,29 @@ class TuyaPlatform {
     return Map<String, dynamic>.from(res as Map);
   }
 
-  // ✅ New: Smart Life style “Add Device” flow (no args)
-  static Future<void> openAddGateway() async {
-    await _channel.invokeMethod('openAddGateway');
+  /// ✅ Ensure the logged-in user always has at least one home.
+  /// Returns: { homeId, name, created: true/false }
+  static Future<Map<String, dynamic>> ensureHome({
+    String name = "My Home",
+    String geoName = "Oman",
+    List<String> rooms = const ["Living Room"],
+  }) async {
+    final res = await _channel.invokeMethod('ensureHome', {
+      'name': name,
+      'geoName': geoName,
+      'rooms': rooms,
+    });
+    return Map<String, dynamic>.from(res as Map);
   }
 
-  // ✅ Backward compatible alias (so your old code won’t break)
-  static Future<void> openAddGatewayWithHome({required int homeId}) async {
-    // Android ignores homeId (Smart Life UI handles it itself)
+  /// ✅ Open Add Device / Gateway flow (requires homeId).
+  static Future<void> openAddGateway({required int homeId}) async {
     await _channel.invokeMethod('openAddGateway', {'homeId': homeId});
   }
 
-  // ✅ QR scan UI
-  static Future<void> openQrScan() async {
-    await _channel.invokeMethod('openQrScan');
-  }
-
-  // ✅ Keep your old zigbee method signature to avoid UI errors
-  static Future<void> openAddZigbeeSubDevice({
-    required int homeId,
-    required String gwId,
-  }) async {
-    // Android will open the same “Add Device” UI flow
-    await _channel.invokeMethod('openAddZigbeeSubDevice', {
-      'homeId': homeId,
-      'gwId': gwId,
-    });
+  /// ✅ Open QR scan flow (also tied to a home).
+  static Future<void> openQrScan({required int homeId}) async {
+    await _channel.invokeMethod('openQrScan', {'homeId': homeId});
   }
 
   static Future<void> stopActivator() async {

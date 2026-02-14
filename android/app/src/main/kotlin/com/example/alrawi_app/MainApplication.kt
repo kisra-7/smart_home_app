@@ -13,27 +13,27 @@ class MainApplication : Application() {
         val (appKey, appSecret) = readThingKeysFromManifest()
 
         if (appKey.isNullOrBlank() || appSecret.isNullOrBlank()) {
-            throw RuntimeException(
-                "THING_APP_KEY / THING_APP_SECRET missing in AndroidManifest.xml"
-            )
+            Log.e(TAG, "❌ Missing THING_APP_KEY / THING_APP_SECRET in AndroidManifest.xml meta-data")
+            return
         }
 
+        // ✅ Core SDK init (required)
         ThingHomeSdk.init(this, appKey, appSecret)
-        Log.d("MainApplication", "ThingHomeSdk initialized with key=$appKey")
+        ThingHomeSdk.setDebugMode(true)
+        Log.d(TAG, "✅ ThingHomeSdk initialized")
     }
 
     private fun readThingKeysFromManifest(): Pair<String?, String?> {
         return try {
-            val appInfo = packageManager.getApplicationInfo(
-                packageName,
-                PackageManager.GET_META_DATA
-            )
-            val md = appInfo.metaData
-            val key = md?.getString("THING_APP_KEY")
-            val secret = md?.getString("THING_APP_SECRET")
-            Pair(key, secret)
-        } catch (e: Exception) {
+            val info = packageManager.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
+            val md = info.metaData
+            Pair(md?.getString("THING_APP_KEY"), md?.getString("THING_APP_SECRET"))
+        } catch (_: Throwable) {
             Pair(null, null)
         }
+    }
+
+    companion object {
+        private const val TAG = "MainApplication"
     }
 }

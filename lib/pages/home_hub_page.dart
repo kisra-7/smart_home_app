@@ -1,5 +1,5 @@
+import '../tuya/tuya_platform.dart';
 import 'package:flutter/material.dart';
-import 'tuya_platform.dart';
 import 'auth_page.dart';
 
 class HomeHubPage extends StatefulWidget {
@@ -36,36 +36,16 @@ class _HomeHubPageState extends State<HomeHubPage> {
     debugPrint("🏠 loading homes...");
     final homes = await TuyaPlatform.getHomeList();
     debugPrint("✅ homes: ${homes.length}");
+
     if (!mounted) return;
     setState(() {
       _homes = homes;
       if (_homes.isNotEmpty) {
         final first = _homes.first;
-        _homeId = (first["homeId"] as num).toInt();
+        _homeId = (first["homeId"] as num?)?.toInt();
         _homeName = (first["name"] ?? "Home").toString();
       }
     });
-
-    // Auto-create a home if none exist (so Add Device works immediately)
-    if (_homes.isEmpty) {
-      debugPrint("➕ no homes, creating default home...");
-      final created = await TuyaPlatform.createHome(
-        name: "My Home",
-        geoName: "Oman",
-        rooms: const ["Living Room"],
-      );
-      debugPrint("✅ created home: $created");
-      final refreshed = await TuyaPlatform.getHomeList();
-      if (!mounted) return;
-      setState(() {
-        _homes = refreshed;
-        if (_homes.isNotEmpty) {
-          final first = _homes.first;
-          _homeId = (first["homeId"] as num).toInt();
-          _homeName = (first["name"] ?? "Home").toString();
-        }
-      });
-    }
   });
 
   Future<void> _logout() => _run(() async {
@@ -79,13 +59,34 @@ class _HomeHubPageState extends State<HomeHubPage> {
   });
 
   Future<void> _addDevice() => _run(() async {
-    debugPrint("➕ open add device...");
-    await TuyaPlatform.openAddGateway();
+    final hid = _homeId;
+    if (hid == null || hid <= 0) {
+      // Safety: if for any reason we have no home, create/ensure one.
+      final info = await TuyaPlatform.ensureHome();
+      final ensured = (info["homeId"] as num?)?.toInt() ?? 0;
+      if (ensured <= 0) throw Exception("Failed to ensure home.");
+      setState(() => _homeId = ensured);
+      await TuyaPlatform.openAddGateway(homeId: ensured);
+      return;
+    }
+
+    debugPrint("➕ open add device for homeId=$hid");
+    await TuyaPlatform.openAddGateway(homeId: hid);
   });
 
   Future<void> _scanQr() => _run(() async {
-    debugPrint("📷 open qr scan...");
-    await TuyaPlatform.openQrScan();
+    final hid = _homeId;
+    if (hid == null || hid <= 0) {
+      final info = await TuyaPlatform.ensureHome();
+      final ensured = (info["homeId"] as num?)?.toInt() ?? 0;
+      if (ensured <= 0) throw Exception("Failed to ensure home.");
+      setState(() => _homeId = ensured);
+      await TuyaPlatform.openQrScan(homeId: ensured);
+      return;
+    }
+
+    debugPrint("📷 open qr scan for homeId=$hid");
+    await TuyaPlatform.openQrScan(homeId: hid);
   });
 
   @override
@@ -142,7 +143,6 @@ class _HomeHubPageState extends State<HomeHubPage> {
             ),
           ),
           const SizedBox(height: 12),
-
           _card(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -153,7 +153,9 @@ class _HomeHubPageState extends State<HomeHubPage> {
                 ),
                 const SizedBox(height: 10),
                 if (_homes.isEmpty)
-                  const Text("No homes found.")
+                  const Text(
+                    "No homes found (should not happen after ensureHome).",
+                  )
                 else
                   DropdownButtonFormField<int>(
                     value: _homeId,
@@ -185,7 +187,6 @@ class _HomeHubPageState extends State<HomeHubPage> {
               ],
             ),
           ),
-
           const SizedBox(height: 12),
           _card(
             child: Column(
@@ -214,11 +215,6 @@ class _HomeHubPageState extends State<HomeHubPage> {
                     icon: const Icon(Icons.qr_code_scanner),
                     label: const Text("Scan QR Code"),
                   ),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  "This opens Tuya’s Device Pairing UI BizBundle (Wi-Fi / QR / gateway flows).",
-                  style: TextStyle(color: Colors.black54),
                 ),
               ],
             ),
