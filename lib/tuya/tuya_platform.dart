@@ -86,15 +86,27 @@ class TuyaPlatform {
   }
 
   // ==========================================================
+  // Option A (BizBundle UI)
+  // ==========================================================
+
+  /// Opens Tuya native QR scan UI (BizBundle).
+  static Future<void> bizOpenQrScan() async {
+    await _channel.invokeMethod('bizOpenQrScan');
+  }
+
+  /// Opens Tuya "Add Device" UI flow (BizBundle).
+  static Future<void> bizOpenAddDevice({required int homeId}) async {
+    await _channel.invokeMethod('bizOpenAddDevice', {'homeId': homeId});
+  }
+
+  // ==========================================================
   // Option B (Direct SDK) - Gateway + Zigbee sub-devices
   // ==========================================================
 
-  /// Starts pairing the gateway (hub) via token + newGwActivator(...)
   static Future<void> startZigbeeGatewayPairing({required int homeId}) async {
     await _channel.invokeMethod('startZigbeeGatewayPairing', {'homeId': homeId});
   }
 
-  /// ✅ Pair device/gateway using QR URL like: https://m.smart.com/XXXX
   static Future<void> pairDeviceByQr({
     required int homeId,
     required String qrUrl,
@@ -107,7 +119,6 @@ class TuyaPlatform {
     });
   }
 
-  /// Starts pairing Zigbee sub-devices through a paired gateway devId.
   static Future<void> startZigbeeSubDevicePairing({
     required String gwDevId,
     int timeout = 100,
@@ -122,28 +133,12 @@ class TuyaPlatform {
     await _channel.invokeMethod('stopActivator');
   }
 
-  // ==========================================================
   // Backwards compatible names (optional)
-  // ==========================================================
   static Future<void> openAddGateway({required int homeId}) async {
     await _channel.invokeMethod('openAddGateway', {'homeId': homeId});
   }
 
   static Future<void> openQrScan({required int homeId}) async {
     await _channel.invokeMethod('openQrScan', {'homeId': homeId});
-  }
-
-  // ==========================================================
-  // Option A (UI BizBundles) - Production flows
-  // ==========================================================
-
-  /// Opens the full pairing UI (Wi-Fi / Zigbee gateway / BLE / QR, etc.)
-  static Future<void> bizOpenAddDevice({required int homeId}) async {
-    await _channel.invokeMethod('bizOpenAddDevice', {'homeId': homeId});
-  }
-
-  /// Opens the native BizBundle QR scanner page.
-  static Future<void> bizOpenQrScan() async {
-    await _channel.invokeMethod('bizOpenQrScan');
   }
 }

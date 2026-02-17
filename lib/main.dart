@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import 'pages/auth_page.dart';
 import 'tuya/tuya_platform.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // No UI snackbar. Only debug logs.
+  // Keep this init here (works fine in production).
+  // If later you want stricter startup handling, we can move it into a bootstrap provider.
   try {
     await TuyaPlatform.initSdk();
     debugPrint("✅ Tuya initSdk OK (from Dart)");
@@ -13,7 +16,7 @@ Future<void> main() async {
     debugPrint("❌ Tuya initSdk failed (from Dart): $e");
   }
 
-  runApp(const MyApp());
+  runApp(const ProviderScope(child: MyApp()));
 }
 
 class MyApp extends StatelessWidget {

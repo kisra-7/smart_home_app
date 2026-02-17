@@ -2,6 +2,7 @@ package com.example.alrawi_app
 
 import android.app.Activity
 import android.content.Context
+import android.os.Bundle
 import android.util.Log
 import com.thingclips.smart.home.sdk.ThingHomeSdk
 import com.thingclips.smart.home.sdk.builder.ThingGwActivatorBuilder
@@ -24,7 +25,6 @@ class TuyaBridge(
 
     private lateinit var channel: MethodChannel
 
-    // Activators (Option B)
     private var gwActivator: IThingActivator? = null
     private var subActivator: IThingActivator? = null
 
@@ -41,65 +41,104 @@ class TuyaBridge(
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
 
-            // ---------- Core ----------
             "initSdk" -> result.success(true)
 
             "isLoggedIn" -> runCatching {
                 result.success(ThingHomeSdk.getUserInstance().isLogin)
             }.getOrElse { result.error("IS_LOGGED_IN_FAILED", it.message, null) }
 
-            // ---------- Auth ----------
             "loginByEmail" -> {
                 val args = call.arguments as? Map<*, *> ?: emptyMap<String, Any>()
-                val countryCode = (args["countryCode"] as? String).orEmpty()
-                val email = (args["email"] as? String).orEmpty()
-                val password = (args["password"] as? String).orEmpty()
-                loginByEmail(countryCode, email, password, result)
+                loginByEmail(
+                    (args["countryCode"] as? String).orEmpty(),
+                    (args["email"] as? String).orEmpty(),
+                    (args["password"] as? String).orEmpty(),
+                    result
+                )
             }
 
             "sendEmailCode" -> {
                 val args = call.arguments as? Map<*, *> ?: emptyMap<String, Any>()
-                val countryCode = (args["countryCode"] as? String).orEmpty()
-                val email = (args["email"] as? String).orEmpty()
-                val type = (args["type"] as? Int) ?: 1
-                sendEmailCode(countryCode, email, type, result)
+                sendEmailCode(
+                    (args["countryCode"] as? String).orEmpty(),
+                    (args["email"] as? String).orEmpty(),
+                    (args["type"] as? Int) ?: 1,
+                    result
+                )
             }
 
             "registerEmail" -> {
                 val args = call.arguments as? Map<*, *> ?: emptyMap<String, Any>()
-                val countryCode = (args["countryCode"] as? String).orEmpty()
-                val email = (args["email"] as? String).orEmpty()
-                val password = (args["password"] as? String).orEmpty()
-                val code = (args["code"] as? String).orEmpty()
-                registerEmail(countryCode, email, password, code, result)
+                registerEmail(
+                    (args["countryCode"] as? String).orEmpty(),
+                    (args["email"] as? String).orEmpty(),
+                    (args["password"] as? String).orEmpty(),
+                    (args["code"] as? String).orEmpty(),
+                    result
+                )
             }
 
             "logout" -> logout(result)
 
-            // ---------- Homes ----------
             "getHomeList" -> getHomeList(result)
-
-            "createHome" -> {
-                val args = call.arguments as? Map<*, *> ?: emptyMap<String, Any>()
-                val name = (args["name"] as? String) ?: "My Home"
-                val geoName = (args["geoName"] as? String) ?: "Oman"
-                val rooms = (args["rooms"] as? List<*>)?.mapNotNull { it as? String } ?: listOf("Living Room")
-                createHome(name, geoName, rooms, result)
-            }
 
             "ensureHome" -> {
                 val args = call.arguments as? Map<*, *> ?: emptyMap<String, Any>()
-                val name = (args["name"] as? String) ?: "My Home"
-                val geoName = (args["geoName"] as? String) ?: "Oman"
-                val rooms = (args["rooms"] as? List<*>)?.mapNotNull { it as? String } ?: listOf("Living Room")
-                ensureHome(name, geoName, rooms, result)
+                ensureHome(
+                    (args["name"] as? String) ?: "My Home",
+                    (args["geoName"] as? String) ?: "Oman",
+                    (args["rooms"] as? List<*>)?.mapNotNull { it as? String } ?: listOf("Living Room"),
+                    result
+                )
             }
 
             // ==========================================================
-            // OPTION B: Direct SDK pairing (NO BizBundle routing)
+            // OPTION A: BizBundles UI (Production)
             // ==========================================================
 
-            // ✅ NEW: Pair device by QR URL (your QR is like https://m.smart.com/XXXX)
+            "bizOpenQrScan" -> {
+                val act = activity
+                if (act == null) {
+                    result.error("NO_ACTIVITY", "Activity is null", null)
+                    return
+                }
+                try {
+                    // ✅ Doc-aligned navigation: UrlBuilder + UrlRouter.execute
+                    bizOpenQrScanViaUrlRouter(act)
+                    result.success(true)
+                } catch (t: Throwable) {
+                    Log.e(TAG, "bizOpenQrScan failed", t)
+                    result.error("BIZ_QR_SCAN_FAILED", t.message, null)
+                }
+            }
+
+            "bizOpenAddDevice" -> {
+                val act = activity
+                if (act == null) {
+                    result.error("NO_ACTIVITY", "Activity is null", null)
+                    return
+                }
+                val homeId = call.argument<Number>("homeId")?.toLong()
+                if (homeId == null || homeId <= 0L) {
+                    result.error("BAD_ARGS", "homeId is required", null)
+                    return
+                }
+                try {
+                    // target-based (from your module_app.json mapping)
+                    bizOpenTargetViaUrlRouter(act, "config_device", Bundle().apply {
+                        putLong("homeId", homeId)
+                    })
+                    result.success(true)
+                } catch (t: Throwable) {
+                    Log.e(TAG, "bizOpenAddDevice failed", t)
+                    result.error("BIZ_ADD_DEVICE_FAILED", t.message, null)
+                }
+            }
+
+            // ==========================================================
+            // OPTION B: Direct SDK pairing
+            // ==========================================================
+
             "pairDeviceByQr" -> {
                 val args = call.arguments as? Map<*, *> ?: emptyMap<String, Any>()
                 val homeId = (args["homeId"] as? Number)?.toLong() ?: 0L
@@ -118,7 +157,6 @@ class TuyaBridge(
                 pairDeviceByQr(homeId, qrUrl, timeout, result)
             }
 
-            // New method name (recommended)
             "startZigbeeGatewayPairing" -> {
                 val args = call.arguments as? Map<*, *> ?: emptyMap<String, Any>()
                 val homeId = (args["homeId"] as? Number)?.toLong() ?: 0L
@@ -126,29 +164,6 @@ class TuyaBridge(
                     result.error("BAD_ARGS", "homeId is required", null)
                     return
                 }
-                startZigbeeGatewayPairing(homeId, result)
-            }
-
-            // Backward compatible: your old UI calls
-            "openAddGateway" -> {
-                val args = call.arguments as? Map<*, *> ?: emptyMap<String, Any>()
-                val homeId = (args["homeId"] as? Number)?.toLong() ?: 0L
-                if (homeId <= 0) {
-                    result.error("BAD_ARGS", "homeId is required", null)
-                    return
-                }
-                startZigbeeGatewayPairing(homeId, result)
-            }
-
-            // NOTE: this is *not* a native scanner now; Flutter scans QR and calls pairDeviceByQr
-            "openQrScan" -> {
-                val args = call.arguments as? Map<*, *> ?: emptyMap<String, Any>()
-                val homeId = (args["homeId"] as? Number)?.toLong() ?: 0L
-                if (homeId <= 0) {
-                    result.error("BAD_ARGS", "homeId is required", null)
-                    return
-                }
-                // Keep old behavior (fallback)
                 startZigbeeGatewayPairing(homeId, result)
             }
 
@@ -172,6 +187,87 @@ class TuyaBridge(
         }
     }
 
+    // ==========================================================
+    // BizBundle navigation (UrlBuilder + UrlRouter.execute)
+    // ==========================================================
+
+    private fun bizOpenQrScanViaUrlRouter(act: Activity) {
+        // Your module_app.json maps scan: "scan_qrcode"
+        val targets = listOf(
+            "scan_qrcode",   // ✅ your mapping
+            "qrcode_scan",
+            "qr_scan",
+            "scan"
+        )
+
+        var lastErr: Throwable? = null
+        for (t in targets) {
+            try {
+                bizOpenTargetViaUrlRouter(act, t, null)
+                return
+            } catch (e: Throwable) {
+                lastErr = e
+            }
+        }
+
+        throw IllegalStateException(
+            "QR Scan route not found. Tried targets:\n$targets\n" +
+                "Last error: ${lastErr?.message}"
+        )
+    }
+
+    private fun bizOpenTargetViaUrlRouter(ctx: Context, target: String, extras: Bundle?) {
+        val urlBuilderClazz = findFirstClass(
+            listOf(
+                "com.thingclips.smart.android.router.UrlBuilder",
+                "com.tuya.smart.android.router.UrlBuilder"
+            )
+        ) ?: throw ClassNotFoundException("UrlBuilder not found")
+
+        val urlRouterClazz = findFirstClass(
+            listOf(
+                "com.thingclips.smart.android.router.UrlRouter",
+                "com.tuya.smart.android.router.UrlRouter"
+            )
+        ) ?: throw ClassNotFoundException("UrlRouter not found")
+
+        // UrlBuilder(Context, String)
+        val ctor = urlBuilderClazz.constructors.firstOrNull { c ->
+            val p = c.parameterTypes
+            p.size == 2 && Context::class.java.isAssignableFrom(p[0]) && p[1] == String::class.java
+        } ?: throw NoSuchMethodException("UrlBuilder(Context, String) ctor not found")
+
+        val builder = ctor.newInstance(ctx, target)
+
+        // optional: putExtras(bundle)
+        if (extras != null) {
+            val putExtras = urlBuilderClazz.methods.firstOrNull { m ->
+                m.name == "putExtras" && m.parameterTypes.size == 1 && m.parameterTypes[0] == Bundle::class.java
+            }
+            putExtras?.invoke(builder, extras)
+        }
+
+        // UrlRouter.execute(UrlBuilder)
+        val execute = urlRouterClazz.methods.firstOrNull { m ->
+            m.name == "execute" && m.parameterTypes.size == 1 && m.parameterTypes[0].isAssignableFrom(urlBuilderClazz)
+        } ?: urlRouterClazz.methods.firstOrNull { m ->
+            // some builds use execute(Object)
+            m.name == "execute" && m.parameterTypes.size == 1
+        } ?: throw NoSuchMethodException("UrlRouter.execute(...) not found")
+
+        // static execute
+        execute.invoke(null, builder)
+    }
+
+    private fun findFirstClass(names: List<String>): Class<*>? {
+        for (n in names) {
+            try {
+                return Class.forName(n)
+            } catch (_: Throwable) {}
+        }
+        return null
+    }
+
     // -------------------- AUTH --------------------
 
     private fun loginByEmail(countryCode: String, email: String, password: String, result: MethodChannel.Result) {
@@ -184,7 +280,6 @@ class TuyaBridge(
                     override fun onSuccess(user: com.thingclips.smart.android.user.bean.User) {
                         result.success(true)
                     }
-
                     override fun onError(code: String, error: String) {
                         result.error(code.ifBlank { "LOGIN_FAILED" }, error, null)
                     }
@@ -198,15 +293,9 @@ class TuyaBridge(
     private fun sendEmailCode(countryCode: String, email: String, type: Int, result: MethodChannel.Result) {
         try {
             ThingHomeSdk.getUserInstance().sendVerifyCodeWithUserName(
-                email,
-                "",
-                countryCode,
-                type,
+                email, "", countryCode, type,
                 object : com.thingclips.smart.sdk.api.IResultCallback {
-                    override fun onSuccess() {
-                        result.success(true)
-                    }
-
+                    override fun onSuccess() { result.success(true) }
                     override fun onError(code: String, error: String) {
                         result.error(code.ifBlank { "SEND_CODE_FAILED" }, error, null)
                     }
@@ -220,15 +309,9 @@ class TuyaBridge(
     private fun registerEmail(countryCode: String, email: String, password: String, code: String, result: MethodChannel.Result) {
         try {
             ThingHomeSdk.getUserInstance().registerAccountWithEmail(
-                countryCode,
-                email,
-                password,
-                code,
+                countryCode, email, password, code,
                 object : com.thingclips.smart.android.user.api.IRegisterCallback {
-                    override fun onSuccess(user: com.thingclips.smart.android.user.bean.User) {
-                        result.success(true)
-                    }
-
+                    override fun onSuccess(user: com.thingclips.smart.android.user.bean.User) { result.success(true) }
                     override fun onError(code: String, error: String) {
                         result.error(code.ifBlank { "REGISTER_FAILED" }, error, null)
                     }
@@ -246,7 +329,6 @@ class TuyaBridge(
                     stopAll()
                     result.success(true)
                 }
-
                 override fun onError(code: String, error: String) {
                     result.error(code.ifBlank { "LOGOUT_FAILED" }, error, null)
                 }
@@ -263,15 +345,9 @@ class TuyaBridge(
             ThingHomeSdk.getHomeManagerInstance().queryHomeList(
                 object : com.thingclips.smart.home.sdk.callback.IThingGetHomeListCallback {
                     override fun onSuccess(homeBeans: MutableList<com.thingclips.smart.home.sdk.bean.HomeBean>) {
-                        val list = homeBeans.map {
-                            mapOf(
-                                "homeId" to it.homeId,
-                                "name" to it.name
-                            )
-                        }
+                        val list = homeBeans.map { mapOf("homeId" to it.homeId, "name" to it.name) }
                         result.success(list)
                     }
-
                     override fun onError(code: String, error: String) {
                         result.error(code.ifBlank { "HOME_LIST_FAILED" }, error, null)
                     }
@@ -279,29 +355,6 @@ class TuyaBridge(
             )
         } catch (t: Throwable) {
             result.error("HOME_LIST_EXCEPTION", t.message, null)
-        }
-    }
-
-    private fun createHome(name: String, geoName: String, rooms: List<String>, result: MethodChannel.Result) {
-        try {
-            ThingHomeSdk.getHomeManagerInstance().createHome(
-                name,
-                0.0,
-                0.0,
-                geoName,
-                rooms,
-                object : com.thingclips.smart.home.sdk.callback.IThingHomeResultCallback {
-                    override fun onSuccess(bean: com.thingclips.smart.home.sdk.bean.HomeBean) {
-                        result.success(mapOf("homeId" to bean.homeId, "name" to bean.name))
-                    }
-
-                    override fun onError(code: String, msg: String) {
-                        result.error(code.ifBlank { "CREATE_HOME_FAILED" }, msg, null)
-                    }
-                }
-            )
-        } catch (t: Throwable) {
-            result.error("CREATE_HOME_EXCEPTION", t.message, null)
         }
     }
 
@@ -315,23 +368,17 @@ class TuyaBridge(
                         return
                     }
                     ThingHomeSdk.getHomeManagerInstance().createHome(
-                        name,
-                        0.0,
-                        0.0,
-                        geoName,
-                        rooms,
+                        name, 0.0, 0.0, geoName, rooms,
                         object : com.thingclips.smart.home.sdk.callback.IThingHomeResultCallback {
                             override fun onSuccess(bean: com.thingclips.smart.home.sdk.bean.HomeBean) {
                                 result.success(mapOf("homeId" to bean.homeId, "name" to bean.name, "created" to true))
                             }
-
                             override fun onError(code: String, msg: String) {
                                 result.error(code.ifBlank { "ENSURE_HOME_CREATE_FAILED" }, msg, null)
                             }
                         }
                     )
                 }
-
                 override fun onError(code: String, error: String) {
                     result.error(code.ifBlank { "ENSURE_HOME_LIST_FAILED" }, error, null)
                 }
@@ -339,21 +386,16 @@ class TuyaBridge(
         )
     }
 
-    // -------------------- OPTION B: Pair Gateway by QR URL --------------------
+    // -------------------- OPTION B: Pair device by QR URL --------------------
 
     private fun pairDeviceByQr(homeId: Long, qrUrl: String, timeout: Int, result: MethodChannel.Result) {
-        val act = activity
-        if (act == null) {
+        val act = activity ?: run {
             result.error("NO_ACTIVITY", "Activity is null", null)
             return
         }
 
-        emit("tuya_flow_step", mapOf("flow" to "qr", "step" to "parse_qr", "homeId" to homeId, "qr" to qrUrl))
-
-        // Stop any previous gateway activator
         stopGwOnly()
 
-        // 1) Parse QR URL -> get uuid
         ThingHomeSdk.getActivatorInstance().deviceQrCodeParse(qrUrl, object : IThingDataCallback<QrScanBean> {
             override fun onSuccess(scan: QrScanBean?) {
                 if (scan == null) {
@@ -367,8 +409,6 @@ class TuyaBridge(
                     return
                 }
 
-                emit("tuya_flow_step", mapOf("flow" to "qr", "step" to "start_qr_activator", "uuid" to uuid))
-
                 val builder = ThingQRCodeActivatorBuilder()
                     .setContext(act)
                     .setHomeId(homeId)
@@ -378,23 +418,11 @@ class TuyaBridge(
                         override fun onError(errorCode: String, errorMsg: String) {
                             emit("tuya_gw_error", mapOf("code" to errorCode, "msg" to errorMsg))
                         }
-
                         override fun onActiveSuccess(devResp: DeviceBean) {
-                            emit(
-                                "tuya_gw_success",
-                                mapOf(
-                                    "devId" to devResp.devId,
-                                    "name" to devResp.name,
-                                    "isOnline" to devResp.isOnline
-                                )
-                            )
+                            emit("tuya_gw_success", mapOf("devId" to devResp.devId, "name" to devResp.name, "isOnline" to devResp.isOnline))
                         }
-
                         override fun onStep(step: String, data: Any?) {
-                            emit(
-                                "tuya_flow_step",
-                                mapOf("flow" to "qr", "step" to step, "data" to (data?.toString() ?: ""))
-                            )
+                            emit("tuya_flow_step", mapOf("flow" to "qr", "step" to step, "data" to (data?.toString() ?: "")))
                         }
                     })
 
@@ -411,17 +439,10 @@ class TuyaBridge(
     }
 
     private fun extractUuid(scan: QrScanBean): String {
-        // Some SDKs provide uuid in actionData map
         return try {
             val actionData = scan.actionData
             when (actionData) {
-                is Map<*, *> -> {
-                    (actionData["uuid"]
-                        ?: actionData["UUID"]
-                        ?: actionData["deviceUuid"]
-                        ?: actionData["device_uuid"]
-                        ?: "").toString().trim()
-                }
+                is Map<*, *> -> (actionData["uuid"] ?: actionData["UUID"] ?: actionData["deviceUuid"] ?: actionData["device_uuid"] ?: "").toString().trim()
                 else -> actionData?.toString()?.trim().orEmpty()
             }
         } catch (_: Throwable) {
@@ -429,21 +450,14 @@ class TuyaBridge(
         }
     }
 
-    // -------------------- OPTION B: Gateway pairing (WiFi token flow) --------------------
-
     private fun startZigbeeGatewayPairing(homeId: Long, result: MethodChannel.Result) {
-        val act = activity
-        if (act == null) {
+        val act = activity ?: run {
             result.error("NO_ACTIVITY", "Activity is null", null)
             return
         }
 
-        emit("tuya_flow_step", mapOf("flow" to "gw", "step" to "get_token", "homeId" to homeId))
-
         ThingHomeSdk.getActivatorInstance().getActivatorToken(homeId, object : IThingActivatorGetToken {
             override fun onSuccess(token: String) {
-                emit("tuya_flow_step", mapOf("flow" to "gw", "step" to "start_activator"))
-
                 stopGwOnly()
 
                 val builder = ThingGwActivatorBuilder()
@@ -454,18 +468,9 @@ class TuyaBridge(
                         override fun onError(errorCode: String, errorMsg: String) {
                             emit("tuya_gw_error", mapOf("code" to errorCode, "msg" to errorMsg))
                         }
-
                         override fun onActiveSuccess(devResp: DeviceBean) {
-                            emit(
-                                "tuya_gw_success",
-                                mapOf(
-                                    "devId" to devResp.devId,
-                                    "name" to devResp.name,
-                                    "isOnline" to devResp.isOnline
-                                )
-                            )
+                            emit("tuya_gw_success", mapOf("devId" to devResp.devId, "name" to devResp.name, "isOnline" to devResp.isOnline))
                         }
-
                         override fun onStep(step: String, data: Any?) {
                             emit("tuya_flow_step", mapOf("flow" to "gw", "step" to step, "data" to (data?.toString() ?: "")))
                         }
@@ -474,7 +479,6 @@ class TuyaBridge(
                 gwActivator = ThingHomeSdk.getActivatorInstance().newGwActivator(builder)
                 gwActivator?.start()
 
-                // return immediately - progress via events
                 result.success(true)
             }
 
@@ -484,12 +488,8 @@ class TuyaBridge(
         })
     }
 
-    // -------------------- OPTION B: Zigbee sub-device pairing --------------------
-
     private fun startZigbeeSubDevicePairing(gwDevId: String, timeout: Int, result: MethodChannel.Result) {
         stopSubOnly()
-
-        emit("tuya_flow_step", mapOf("flow" to "sub", "step" to "start_sub_pairing", "gwDevId" to gwDevId))
 
         val builder = ThingGwSubDevActivatorBuilder()
             .setDevId(gwDevId)
@@ -498,18 +498,9 @@ class TuyaBridge(
                 override fun onError(errorCode: String, errorMsg: String) {
                     emit("tuya_sub_error", mapOf("code" to errorCode, "msg" to errorMsg))
                 }
-
                 override fun onActiveSuccess(devResp: DeviceBean) {
-                    emit(
-                        "tuya_sub_success",
-                        mapOf(
-                            "devId" to devResp.devId,
-                            "name" to devResp.name,
-                            "isOnline" to devResp.isOnline
-                        )
-                    )
+                    emit("tuya_sub_success", mapOf("devId" to devResp.devId, "name" to devResp.name, "isOnline" to devResp.isOnline))
                 }
-
                 override fun onStep(step: String, data: Any?) {
                     emit("tuya_flow_step", mapOf("flow" to "sub", "step" to step, "data" to (data?.toString() ?: "")))
                 }
@@ -520,8 +511,6 @@ class TuyaBridge(
 
         result.success(true)
     }
-
-    // -------------------- Stop / cleanup --------------------
 
     private fun stopGwOnly() {
         try { gwActivator?.stop() } catch (_: Throwable) {}
@@ -540,23 +529,12 @@ class TuyaBridge(
         stopSubOnly()
     }
 
-    // -------------------- Flutter event helper --------------------
-
     private fun emit(method: String, args: Any?) {
         try {
             if (!::channel.isInitialized) return
-            activity?.runOnUiThread {
-                try {
-                    channel.invokeMethod(method, args)
-                } catch (t: Throwable) {
-                    Log.w(TAG, "emit failed: $method -> ${t.message}")
-                }
-            } ?: run {
-                // fallback (should rarely happen)
-                channel.invokeMethod(method, args)
-            }
+            activity?.runOnUiThread { channel.invokeMethod(method, args) } ?: channel.invokeMethod(method, args)
         } catch (t: Throwable) {
-            Log.w(TAG, "emit wrapper failed: $method -> ${t.message}")
+            Log.w(TAG, "emit failed: $method -> ${t.message}")
         }
     }
 

@@ -2,25 +2,21 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../tuya/controllers/home_hub_controller.dart';
 import '../tuya/tuya_platform.dart';
 import 'auth_page.dart';
 
-class HomeHubPage extends StatefulWidget {
+class HomeHubPage extends ConsumerStatefulWidget {
   const HomeHubPage({super.key});
 
   @override
-  State<HomeHubPage> createState() => _HomeHubPageState();
+  ConsumerState<HomeHubPage> createState() => _HomeHubPageState();
 }
 
-class _HomeHubPageState extends State<HomeHubPage> {
-  bool _busy = false;
-
-  List<Map<String, dynamic>> _homes = [];
-  int? _homeId;
-  String _homeName = "Home";
-
+class _HomeHubPageState extends ConsumerState<HomeHubPage> {
   // Captured after gateway pairing success
   final TextEditingController _gwDevIdCtrl = TextEditingController();
 
@@ -28,90 +24,6 @@ class _HomeHubPageState extends State<HomeHubPage> {
   bool _gatewayAdded = false;
   String _gatewayName = "";
   bool _gatewayOnline = false;
-
-  Future<void> _run(Future<void> Function() fn) async {
-    if (!mounted) return;
-    setState(() => _busy = true);
-    try {
-      await fn();
-    } catch (e) {
-      debugPrint("❌ HomeHub error: $e");
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Error: $e")),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _loadHomes({bool autoPickFirst = true}) => _run(() async {
-        final homes = await TuyaPlatform.getHomeList();
-
-        if (!mounted) return;
-        setState(() {
-          _homes = homes;
-          if (autoPickFirst && homes.isNotEmpty) {
-            final first = homes.first;
-            _homeId = (first["homeId"] as num?)?.toInt();
-            _homeName = (first["name"] ?? "Home").toString();
-          }
-        });
-      });
-
-  Future<void> _ensureHomeIfNeeded() async {
-    final hid = _homeId;
-    if (hid != null && hid > 0) return;
-
-    final info = await TuyaPlatform.ensureHome();
-    final ensured = (info["homeId"] as num?)?.toInt() ?? 0;
-    if (ensured <= 0) throw Exception("Failed to ensure home.");
-
-    if (!mounted) return;
-    setState(() {
-      _homeId = ensured;
-      _homeName = (info["name"] ?? "Home").toString();
-    });
-  }
-
-  Future<void> _logout() => _run(() async {
-        await TuyaPlatform.logout();
-        if (!mounted) return;
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (_) => const AuthPage()),
-          (_) => false,
-        );
-      });
-
-  Future<void> _startGatewayPairing() => _run(() async {
-        await _ensureHomeIfNeeded();
-        final hid = _homeId!;
-        await TuyaPlatform.startZigbeeGatewayPairing(homeId: hid);
-
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Gateway pairing started. Put hub in pairing mode."),
-          ),
-        );
-      });
-
-  Future<void> _startSubPairing() => _run(() async {
-        final gwDevId = _gwDevIdCtrl.text.trim();
-        if (gwDevId.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Gateway devId is empty. Pair gateway first.")),
-          );
-          return;
-        }
-        await TuyaPlatform.startZigbeeSubDevicePairing(gwDevId: gwDevId);
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Zigbee pairing started. Reset Zigbee device now.")),
-        );
-      });
 
   // ✅ IMPORTANT: wait until app returns to RESUMED after closing the camera
   Future<void> _waitUntilResumed() async {
@@ -132,7 +44,6 @@ class _HomeHubPageState extends State<HomeHubPage> {
     WidgetsBinding.instance.addObserver(observer);
 
     try {
-      // Give it a short window; if it doesn't resume, we still proceed.
       await completer.future.timeout(const Duration(seconds: 3));
     } catch (_) {
       // ignore timeout
@@ -140,50 +51,82 @@ class _HomeHubPageState extends State<HomeHubPage> {
       WidgetsBinding.instance.removeObserver(observer);
     }
 
-    // One extra small delay helps some devices settle UI transitions
     await Future.delayed(const Duration(milliseconds: 250));
   }
 
-  Future<void> _scanQrAndStartGateway() => _run(() async {
-        await _ensureHomeIfNeeded();
-        final hid = _homeId!;
+  Future<void> _logout(bool busy) async {
+    if (busy) return;
+    try {
+      await TuyaPlatform.logout();
+      if (!mounted) return;
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const AuthPage()),
+        (_) => false,
+      );
+    } catch (e) {
+      debugPrint("❌ Logout error: $e");
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e")),
+      );
+    }
+  }
 
-        final qr = await Navigator.push<String?>(
-          context,
-          MaterialPageRoute(builder: (_) => const _QrScanPage()),
-        );
+  // Direct SDK QR flow (kept for testing fallback)
+  Future<void> _scanQrAndStartGateway(bool busy) async {
+    if (busy) return;
 
-        if (qr == null || qr.trim().isEmpty) return;
+    try {
+      final controller = ref.read(homeHubControllerProvider.notifier);
+      final hid = await controller.ensureHomeId();
 
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("QR scanned: ${qr.trim()}")),
-        );
+      final qr = await Navigator.push<String?>(
+        context,
+        MaterialPageRoute(builder: (_) => const _QrScanPage()),
+      );
 
-        // ✅ FIX: do not start Tuya pairing until app is RESUMED (foreground=true)
-        await _waitUntilResumed();
+      if (qr == null || qr.trim().isEmpty) return;
 
-        await TuyaPlatform.pairDeviceByQr(
-          homeId: hid,
-          qrUrl: qr.trim(),
-          timeout: 100,
-        );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("QR scanned: ${qr.trim()}")),
+      );
 
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("QR pairing started...")),
-        );
-      });
+      await _waitUntilResumed();
 
-  void _showAddSheet() {
+      await TuyaPlatform.pairDeviceByQr(
+        homeId: hid,
+        qrUrl: qr.trim(),
+        timeout: 100,
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("QR pairing started...")),
+      );
+    } catch (e) {
+      debugPrint("❌ QR flow error: $e");
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e")),
+      );
+    }
+  }
+
+  void _showAddSheet({
+    required bool busy,
+    required Future<void> Function() onBizAddDevice,
+    required Future<void> Function() onBizQrScan,
+  }) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       builder: (_) => _AddDeviceSheet(
-        busy: _busy,
-        onScanQr: _scanQrAndStartGateway,
-        onAddGateway: _startGatewayPairing,
-        onAddZigbee: _startSubPairing,
+        busy: busy,
+        onBizAddDevice: onBizAddDevice,
+        onBizQrScan: onBizQrScan,
+        onScanQr: () => _scanQrAndStartGateway(busy),
       ),
     );
   }
@@ -241,7 +184,10 @@ class _HomeHubPageState extends State<HomeHubPage> {
       return null;
     });
 
-    _loadHomes();
+    // Load homes once after first frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(homeHubControllerProvider.notifier).loadHomes();
+    });
   }
 
   @override
@@ -252,15 +198,32 @@ class _HomeHubPageState extends State<HomeHubPage> {
 
   @override
   Widget build(BuildContext context) {
-    final title = _homeId == null ? "Alrawi" : _homeName;
+    final hubState = ref.watch(homeHubControllerProvider);
+    final busy = hubState.isLoading;
+
+    final data = hubState.value ?? HomeHubState.empty;
+    final homes = data.homes;
+    final homeId = data.selectedHomeId;
+    final homeName = data.selectedHomeName;
+
+    final title = homeId == null ? "Alrawi" : homeName;
 
     final devId = _gwDevIdCtrl.text.trim();
-
     final gatewaySubtitle = devId.isEmpty
         ? "Not added yet"
         : "Added ✅ • ${_gatewayOnline ? "Online" : "Offline"}"
             "${_gatewayName.isNotEmpty ? " • $_gatewayName" : ""}"
             " • devId: $devId";
+
+    ref.listen(homeHubControllerProvider, (prev, next) {
+      next.whenOrNull(
+        error: (e, _) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Error: $e")),
+          );
+        },
+      );
+    });
 
     return Scaffold(
       backgroundColor: const Color(0xFFF4F6FA),
@@ -278,22 +241,26 @@ class _HomeHubPageState extends State<HomeHubPage> {
               ),
             ),
             const SizedBox(width: 8),
-            if (_homes.isNotEmpty)
+            if (homes.isNotEmpty)
               PopupMenuButton<int>(
                 tooltip: "Switch Home",
                 onSelected: (id) {
-                  final match = _homes.firstWhere((h) => (h["homeId"] as num).toInt() == id);
-                  setState(() {
-                    _homeId = id;
-                    _homeName = (match["name"] ?? "Home").toString();
+                  final match = homes.firstWhere(
+                    (h) => (h["homeId"] as num).toInt() == id,
+                  );
+                  ref.read(homeHubControllerProvider.notifier).selectHome(
+                        id,
+                        (match["name"] ?? "Home").toString(),
+                      );
 
+                  setState(() {
                     _gwDevIdCtrl.clear();
                     _gatewayAdded = false;
                     _gatewayName = "";
                     _gatewayOnline = false;
                   });
                 },
-                itemBuilder: (_) => _homes
+                itemBuilder: (_) => homes
                     .map(
                       (h) => PopupMenuItem<int>(
                         value: (h["homeId"] as num).toInt(),
@@ -307,11 +274,15 @@ class _HomeHubPageState extends State<HomeHubPage> {
         ),
         actions: [
           IconButton(
-            onPressed: _busy ? null : () => _loadHomes(autoPickFirst: false),
+            onPressed: busy
+                ? null
+                : () => ref
+                    .read(homeHubControllerProvider.notifier)
+                    .loadHomes(autoPickFirst: false),
             icon: const Icon(Icons.refresh),
           ),
           IconButton(
-            onPressed: _busy ? null : _logout,
+            onPressed: () => _logout(busy),
             icon: const Icon(Icons.logout),
           ),
         ],
@@ -325,11 +296,25 @@ class _HomeHubPageState extends State<HomeHubPage> {
             icon: Icons.hub,
             title: "Gateway / Hub",
             subtitle: gatewaySubtitle,
-            trailing: _busy
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+            trailing: busy
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
                 : const Icon(Icons.chevron_right),
-            onTap: _busy ? null : _showAddSheet,
-            borderColor: devId.isEmpty ? Colors.black12 : Colors.green.withOpacity(0.35),
+            onTap: busy
+                ? null
+                : () => _showAddSheet(
+                      busy: busy,
+                      onBizAddDevice: () =>
+                          ref.read(homeHubControllerProvider.notifier).openBizAddDevice(),
+                      onBizQrScan: () =>
+                          ref.read(homeHubControllerProvider.notifier).openBizQrScan(),
+                    ),
+            borderColor: devId.isEmpty
+                ? Colors.black12
+                : Colors.green.withOpacity(0.35),
           ),
           if (_gatewayAdded && devId.isNotEmpty) ...[
             const SizedBox(height: 10),
@@ -345,7 +330,15 @@ class _HomeHubPageState extends State<HomeHubPage> {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _busy ? null : _showAddSheet,
+        onPressed: busy
+            ? null
+            : () => _showAddSheet(
+                  busy: busy,
+                  onBizAddDevice: () =>
+                      ref.read(homeHubControllerProvider.notifier).openBizAddDevice(),
+                  onBizQrScan: () =>
+                      ref.read(homeHubControllerProvider.notifier).openBizQrScan(),
+                ),
         backgroundColor: Colors.blueAccent,
         icon: const Icon(Icons.add),
         label: const Text("Add Device"),
@@ -428,9 +421,15 @@ class _HomeHubPageState extends State<HomeHubPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
+                  Text(
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
                   const SizedBox(height: 4),
-                  Text(subtitle, style: const TextStyle(color: Colors.black54)),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(color: Colors.black54),
+                  ),
                 ],
               ),
             ),
@@ -481,15 +480,15 @@ class _LifeObserver extends WidgetsBindingObserver {
 
 class _AddDeviceSheet extends StatelessWidget {
   final bool busy;
+  final Future<void> Function() onBizAddDevice;
+  final Future<void> Function() onBizQrScan;
   final Future<void> Function() onScanQr;
-  final Future<void> Function() onAddGateway;
-  final Future<void> Function() onAddZigbee;
 
   const _AddDeviceSheet({
     required this.busy,
+    required this.onBizAddDevice,
+    required this.onBizQrScan,
     required this.onScanQr,
-    required this.onAddGateway,
-    required this.onAddZigbee,
   });
 
   @override
@@ -516,14 +515,45 @@ class _AddDeviceSheet extends StatelessWidget {
             const SizedBox(height: 12),
             const Align(
               alignment: Alignment.centerLeft,
-              child: Text("Add Device", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+              child: Text(
+                "Add Device",
+                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+              ),
             ),
             const SizedBox(height: 12),
+
+            _sheetBtn(
+              context,
+              icon: Icons.add_circle_outline,
+              title: "Add Device (Tuya UI)",
+              subtitle: "Official Tuya pairing flow (Wi-Fi / Zigbee / BLE / QR)",
+              onTap: busy
+                  ? null
+                  : () async {
+                      Navigator.pop(context);
+                      await onBizAddDevice();
+                    },
+            ),
+            const SizedBox(height: 10),
+            _sheetBtn(
+              context,
+              icon: Icons.qr_code,
+              title: "Open Native QR Scan (Tuya UI)",
+              subtitle: "Use Tuya’s built-in QR scanner screen",
+              onTap: busy
+                  ? null
+                  : () async {
+                      Navigator.pop(context);
+                      await onBizQrScan();
+                    },
+            ),
+
+            const SizedBox(height: 10),
             _sheetBtn(
               context,
               icon: Icons.qr_code_scanner,
-              title: "Scan QR Code (recommended)",
-              subtitle: "Use the hub QR sticker to add it quickly",
+              title: "QR Scan (Direct SDK fallback)",
+              subtitle: "Manual QR scan (mobile_scanner) then pair",
               onTap: busy
                   ? null
                   : () async {
@@ -531,33 +561,8 @@ class _AddDeviceSheet extends StatelessWidget {
                       await onScanQr();
                     },
             ),
-            const SizedBox(height: 10),
-            _sheetBtn(
-              context,
-              icon: Icons.hub,
-              title: "Add Gateway / Hub",
-              subtitle: "Manual pairing (no QR scan)",
-              onTap: busy
-                  ? null
-                  : () async {
-                      Navigator.pop(context);
-                      await onAddGateway();
-                    },
-            ),
-            const SizedBox(height: 10),
-            _sheetBtn(
-              context,
-              icon: Icons.sensors,
-              title: "Add Zigbee Device",
-              subtitle: "Pair sensors/switches through the hub",
-              onTap: busy
-                  ? null
-                  : () async {
-                      Navigator.pop(context);
-                      await onAddZigbee();
-                    },
-            ),
-            const SizedBox(height: 6),
+
+            const SizedBox(height: 8),
           ],
         ),
       ),
@@ -569,17 +574,16 @@ class _AddDeviceSheet extends StatelessWidget {
     required IconData icon,
     required String title,
     required String subtitle,
-    required VoidCallback? onTap,
+    required Future<void> Function()? onTap,
   }) {
     return InkWell(
-      onTap: onTap,
+      onTap: onTap == null ? null : () => onTap(),
       borderRadius: BorderRadius.circular(14),
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: Colors.black12),
-          color: const Color(0xFFF8FAFF),
         ),
         child: Row(
           children: [
@@ -595,7 +599,7 @@ class _AddDeviceSheet extends StatelessWidget {
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right, color: Colors.black45),
+            const Icon(Icons.chevron_right),
           ],
         ),
       ),
@@ -603,7 +607,7 @@ class _AddDeviceSheet extends StatelessWidget {
   }
 }
 
-/// Simple QR scan page (returns scanned string)
+// ---------------- QR page (unchanged) ----------------
 class _QrScanPage extends StatefulWidget {
   const _QrScanPage();
 
@@ -612,54 +616,34 @@ class _QrScanPage extends StatefulWidget {
 }
 
 class _QrScanPageState extends State<_QrScanPage> {
+  final MobileScannerController _controller = MobileScannerController();
   bool _handled = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
-        title: const Text("Scan QR Code"),
-      ),
-      body: Stack(
-        children: [
-          MobileScanner(
-            onDetect: (capture) {
-              if (_handled) return;
-              final codes = capture.barcodes;
-              if (codes.isEmpty) return;
-
-              final raw = codes.first.rawValue;
-              if (raw == null || raw.trim().isEmpty) return;
-
-              _handled = true;
-              Navigator.pop(context, raw.trim());
-            },
-          ),
-          Center(
-            child: Container(
-              width: 260,
-              height: 260,
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.white70, width: 2),
-                borderRadius: BorderRadius.circular(18),
-              ),
-            ),
-          ),
-          const Positioned(
-            left: 24,
-            right: 24,
-            bottom: 30,
-            child: Text(
-              "Align the QR within the frame.\nScanning will start pairing automatically.",
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white70),
-            ),
-          )
-        ],
+      appBar: AppBar(title: const Text("Scan QR")),
+      body: MobileScanner(
+        controller: _controller,
+        onDetect: (capture) {
+          if (_handled) return;
+          final barcode = capture.barcodes.firstOrNull;
+          final raw = barcode?.rawValue;
+          if (raw == null || raw.trim().isEmpty) return;
+          _handled = true;
+          Navigator.pop(context, raw.trim());
+        },
       ),
     );
   }
+}
+
+extension _FirstOrNull<T> on List<T> {
+  T? get firstOrNull => isEmpty ? null : first;
 }
