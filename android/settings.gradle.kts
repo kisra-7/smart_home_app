@@ -29,8 +29,9 @@ plugins {
 dependencyResolutionManagement {
     // ✅ Allow dependencies/plugins that declare their own repositories
     repositoriesMode.set(
-        org.gradle.api.initialization.resolve.RepositoriesMode.PREFER_PROJECT
-    )
+    org.gradle.api.initialization.resolve.RepositoriesMode.PREFER_SETTINGS
+)
+
 
     repositories {
     google()
@@ -42,8 +43,10 @@ dependencyResolutionManagement {
     maven { url = uri("https://storage.googleapis.com/download.flutter.io") }
 
     // Tuya / ThingClips repos
-    maven { url = uri("https://maven-other.tuya.com/repository/maven-releases/") }
-    maven { url = uri("https://maven-other.tuya.com/repository/maven-commercial-releases/") }
+    // Tuya / ThingClips repos (✅ prefer commercial first)
+maven { url = uri("https://maven-other.tuya.com/repository/maven-commercial-releases/") }
+maven { url = uri("https://maven-other.tuya.com/repository/maven-releases/") }
+
 
     maven { url = uri("https://jitpack.io") }
 

@@ -1,0 +1,92 @@
+[
+  {
+    "npmName": "AIKit",
+    "version": "1.6.0",
+    "PBTGroupName": "TUNIAIKit"
+  },
+  {
+    "npmName": "WearKit",
+    "version": "1.6.31",
+    "PBTGroupName": "TUNIWearKit"
+  },
+  {
+    "npmName": "HomeKit",
+    "version": "3.10.1",
+    "PBTGroupName": "TUNIHomeKit"
+  },
+  {
+    "npmName": "SweeperKit",
+    "version": "2.0.0",
+    "PBTGroupName": "TUNISweeperKit"
+  },
+  {
+    "npmName": "PlayNetKit",
+    "version": "1.3.31",
+    "PBTGroupName": "TUNIPlayNetKit"
+  },
+  {
+    "npmName": "BizKit",
+    "version": "4.22.3",
+    "PBTGroupName": "TUNIBizKit"
+  },
+  {
+    "npmName": "IPCKit",
+    "version": "6.10.7",
+    "PBTGroupName": "TUNIIPCKit"
+  },
+  {
+    "npmName": "DeviceKit",
+    "version": "4.23.0",
+    "PBTGroupName": "TUNIDeviceKit"
+  },
+  {
+    "npmName": "BaseKit",
+    "version": "3.27.2",
+    "PBTGroupName": "TUNIBaseKit"
+  },
+  {
+    "npmName": "MediaKit",
+    "version": "3.6.2",
+    "PBTGroupName": "TUNIMediaKit"
+  },
+  {
+    "npmName": "P2PKit",
+    "version": "6.4.2",
+    "PBTGroupName": "TUNIP2PKit"
+  },
+  {
+    "npmName": "HealthKit",
+    "version": "6.6.0",
+    "PBTGroupName": "TUNIHealthKit"
+  },
+  {
+    "npmName": "MapKit",
+    "version": "6.11.5",
+    "PBTGroupName": "TUNIMapKit"
+  },
+  {
+    "npmName": "LightKit",
+    "version": "1.0.16",
+    "PBTGroupName": "TUNILightKit"
+  },
+  {
+    "npmName": "MediaPlayerKit",
+    "version": "1.0.22",
+    "PBTGroupName": "TUNIMediaPlayerKit"
+  },
+  {
+    "npmName": "CategoryCommonBizKit",
+    "version": "6.4.1",
+    "PBTGroupName": "TUNICategoryCommonBizKit"
+  },
+  {
+    "npmName": "AIStreamKit",
+    "version": "1.3.5",
+    "PBTGroupName": "TUNIAIStreamKit"
+  },
+  {
+    "npmName": "MiniKit",
+    "version": "3.25.2",
+    "PBTGroupName": "TUNIMiniKit"
+  }
+]

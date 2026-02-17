@@ -1,24 +1,23 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Required for ThingClips/Tuya SDK networking -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 
-    <!-- Needed for Wi-Fi scan / BLE scan in pairing flows -->
+    <!-- BizBundle QR scanning UI requires camera permission -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
-    <!-- Android 12+ Bluetooth runtime permissions -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
 
-    <!-- Android 13+ -->
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" tools:targetApi="33" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" tools:targetApi="33" />
 
@@ -29,13 +28,26 @@
         android:theme="@style/NormalTheme"
         tools:replace="android:theme">
 
-        <!-- ✅ FIX: use real values from res/values/tuya.xml -->
+        <!-- Extra key aliases that some BizBundle builds read -->
         <meta-data
-            android:name="THING_APP_KEY"
+            android:name="THING_SMART_APPKEY"
             android:value="@string/tuya_app_key" />
+        <meta-data
+            android:name="THING_SMART_SECRET"
+            android:value="@string/tuya_app_secret" />
 
         <meta-data
-            android:name="THING_APP_SECRET"
+            android:name="TUYA_SMART_APPKEY"
+            android:value="@string/tuya_app_key" />
+        <meta-data
+            android:name="TUYA_SMART_SECRET"
+            android:value="@string/tuya_app_secret" />
+
+        <meta-data
+            android:name="TUYA_APP_KEY"
+            android:value="@string/tuya_app_key" />
+        <meta-data
+            android:name="TUYA_APP_SECRET"
             android:value="@string/tuya_app_secret" />
 
         <activity

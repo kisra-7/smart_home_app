@@ -7,39 +7,39 @@ plugins {
 android {
     namespace = "com.example.alrawi_app"
 
-    // Keep Flutter compileSdk (your emulator is API 36 anyway)
     compileSdk = flutter.compileSdkVersion
 
     defaultConfig {
         applicationId = "com.example.alrawi_app"
 
-        // ✅ REQUIRED by Tuya UI BizBundle framework
+        // Tuya UI BizBundle prerequisite
         minSdk = flutter.minSdkVersion
         targetSdk = 35
 
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
-
     configurations.configureEach {
-        resolutionStrategy.dependencySubstitution {
-            substitute(module("com.google.android:flexbox:1.1.1"))
-                .using(module("com.google.android.flexbox:flexbox:3.0.0"))
+    resolutionStrategy.dependencySubstitution {
+        // Tuya BizBundle requests a non-existent artifact: com.google.android:flexbox:1.1.1
+        substitute(module("com.google.android:flexbox:1.1.1"))
+            .using(module("com.google.android.flexbox:flexbox:3.0.0"))
 
-            substitute(module("jp.wasabeef:recyclerview-animators:3.0.0"))
-                .using(module("jp.wasabeef:recyclerview-animators:4.0.2"))
-        }
+        // Tuya BizBundle requests an old version that may not resolve in your repos
+        substitute(module("jp.wasabeef:recyclerview-animators:3.0.0"))
+            .using(module("jp.wasabeef:recyclerview-animators:4.0.2"))
     }
+}
+
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    kotlinOptions { jvmTarget = "17" }
 
+    // If you were disabling splits, keep it consistent
     splits {
         abi {
             isEnable = false
@@ -53,6 +53,7 @@ android {
         }
     }
 
+    // Only keep flatDir if you truly need local AARs in android/app/libs
     repositories {
         flatDir { dirs("libs") }
     }
@@ -69,7 +70,9 @@ android {
             )
         }
         resources {
+            // Fixes ant + ant-launcher duplicate META-INF/INDEX.LIST if ant is pulled
             pickFirsts += setOf("META-INF/INDEX.LIST")
+
             excludes += setOf(
                 "META-INF/DEPENDENCIES",
                 "META-INF/LICENSE",
@@ -82,35 +85,34 @@ android {
     }
 }
 
-/**
- * ✅ IMPORTANT:
- * Do NOT exclude Thing/Tuya annotation/plugin artifacts globally.
- * It can break BizBundle/Activator runtime class loading.
- */
-
 dependencies {
-    // Tuya docs commonly require this for BizBundle compatibility
-    implementation("org.apache.ant:ant:1.10.5")
-
-    // (Optional) Your local security AAR (keep only if you actually need it)
+    // Only keep if you really use it
     implementation(files("libs/security-algorithm-1.0.0-beta.aar"))
 
-    // ✅ Core Home SDK
-    implementation("com.thingclips.smart:thingsmart:6.11.6")
+    // Tuya requirement for BizBundle compatibility (per Tuya doc)
+    implementation("org.apache.ant:ant:1.10.5")
 
-    // ✅ UI BizBundle BOM (pins correct versions)
-    implementation(enforcedPlatform("com.thingclips.smart:thingsmart-BizBundlesBom:6.11.6"))
+    // ✅ Keep versions CONSISTENT (same line for SDK + BizBundlesBom)
+    val tuyaVersion = "6.11.6"
 
-    // ✅ UI BizBundle framework runtime
+    // Home SDK
+    implementation("com.thingclips.smart:thingsmart:$tuyaVersion")
+
+    // BizBundle BOM (pins internal module versions)
+    implementation(enforcedPlatform("com.thingclips.smart:thingsmart-BizBundlesBom:$tuyaVersion"))
+
+    // ✅ BizBundle framework runtime (this is what usually provides BizBundleInitializer)
     implementation("com.thingclips.smart:thingsmart-bizbundle-basekit")
     implementation("com.thingclips.smart:thingsmart-bizbundle-bizkit")
 
     // ✅ Device pairing UI BizBundle
     implementation("com.thingclips.smart:thingsmart-bizbundle-device_activator")
+
+    // ✅ QR scan BizBundle (if you use scan)
     implementation("com.thingclips.smart:thingsmart-bizbundle-qrcode_mlkit")
 
-    // ✅ Home/Family
-    implementation("com.thingclips.smart:thingsmart-bizbundle-family")
+    // (Optional) Home/Family BizBundle — only if your app uses it
+    // implementation("com.thingclips.smart:thingsmart-bizbundle-family")
 }
 
 flutter {
