@@ -226,8 +226,12 @@ class TuyaBridge(
     // BizBundle reflection helpers
     // ==========================================================
 
-    private fun openBizQrScan(act: Activity) {
+private fun openBizQrScan(act: Activity) {
     val candidates = listOf(
+        // ✅ confirmed in your APK
+        "com.thingclips.smart.activator.scan.qrcode.ScanManager",
+
+        // fallback candidates (harmless)
         "com.thingclips.smart.grcode.api.ScanManager",
         "com.thingclips.smart.grcode.ScanManager",
         "com.thingclips.smart.bizbundle.qrcode.api.ScanManager",
@@ -237,30 +241,53 @@ class TuyaBridge(
     )
 
     val clazz = findFirstClass(candidates)
-    if (clazz == null) {
-        // ✅ Production-safe fallback:
-        // ScanManager class is not in APK => open full pairing UI instead.
-        Log.e(TAG, "ScanManager not found in APK. Falling back to DeviceActivator UI.")
-        openBizAddDevice(act)
-        return
-    }
+        ?: throw ClassNotFoundException("ScanManager not found. Tried:\n$candidates")
 
     val instance = clazz.getDeclaredField("INSTANCE").get(null)
-    val openScan = clazz.methods.firstOrNull { m ->
+
+    // ✅ Your SDK exposes: openScan(Context) and openScan(Context, Bundle)
+    val m1 = clazz.methods.firstOrNull { m ->
         m.name == "openScan" &&
             m.parameterTypes.size == 1 &&
-            Activity::class.java.isAssignableFrom(m.parameterTypes[0])
-    } ?: run {
-        Log.e(TAG, "openScan(Activity) not found on ${clazz.name}. Falling back to DeviceActivator UI.")
-        openBizAddDevice(act)
+            android.content.Context::class.java.isAssignableFrom(m.parameterTypes[0])
+    }
+    if (m1 != null) {
+        m1.invoke(instance, act as android.content.Context)
         return
     }
 
-    openScan.invoke(instance, act)
+    val m2 = clazz.methods.firstOrNull { m ->
+        m.name == "openScan" &&
+            m.parameterTypes.size == 2 &&
+            android.content.Context::class.java.isAssignableFrom(m.parameterTypes[0]) &&
+            android.os.Bundle::class.java.isAssignableFrom(m.parameterTypes[1])
+    }
+    if (m2 != null) {
+        m2.invoke(instance, act as android.content.Context, android.os.Bundle())
+        return
+    }
+
+    throw NoSuchMethodException("openScan(Context) not found on ${clazz.name}")
 }
 
-   private fun openBizAddDevice(act: Activity) {
+private fun defaultArg(type: Class<*>): Any? {
+    return when {
+        android.os.Bundle::class.java.isAssignableFrom(type) -> android.os.Bundle()
+        java.lang.Boolean.TYPE == type || java.lang.Boolean::class.java.isAssignableFrom(type) -> false
+        java.lang.Integer.TYPE == type || java.lang.Integer::class.java.isAssignableFrom(type) -> 0
+        java.lang.Long.TYPE == type || java.lang.Long::class.java.isAssignableFrom(type) -> 0L
+        java.lang.String::class.java.isAssignableFrom(type) -> ""
+        else -> null
+    }
+}
+
+private fun openBizAddDevice(act: Activity) {
+    // ✅ REAL class found in your APK:
+    // LLcom/thingclips/smart/activator/plug/mesosphere/ThingDeviceActivatorManager;
     val candidates = listOf(
+        "com.thingclips.smart.activator.plug.mesosphere.ThingDeviceActivatorManager",
+
+        // keep old candidates as fallback
         "com.thingclips.smart.android.device.config.api.ThingDeviceActivatorManager",
         "com.thingclips.smart.android.device.config.ThingDeviceActivatorManager",
         "com.tuya.smart.android.device.config.api.ThingDeviceActivatorManager",
@@ -271,6 +298,7 @@ class TuyaBridge(
         ?: throw ClassNotFoundException("ThingDeviceActivatorManager not found. Tried:\n$candidates")
 
     val instance = clazz.getDeclaredField("INSTANCE").get(null)
+
     val start = clazz.methods.firstOrNull { m ->
         m.name == "startDeviceActiveAction" &&
             m.parameterTypes.size == 1 &&
@@ -279,6 +307,9 @@ class TuyaBridge(
 
     start.invoke(instance, act)
 }
+
+
+
     private fun findFirstClass(names: List<String>): Class<*>? {
         val cl = context.classLoader
         for (n in names) {
