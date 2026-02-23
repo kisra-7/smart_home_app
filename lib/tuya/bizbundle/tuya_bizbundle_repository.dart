@@ -7,7 +7,7 @@ class TuyaBizbundleRepository {
     return TuyaPlatform.bizOpenAddDevice(homeId: homeId);
   }
 
-  Future<void> openQrScan() {
-    return TuyaPlatform.bizOpenQrScan();
+  Future<void> openQrScan({required int homeId}) {
+    return TuyaPlatform.bizOpenQrScan(homeId: homeId);
   }
 }

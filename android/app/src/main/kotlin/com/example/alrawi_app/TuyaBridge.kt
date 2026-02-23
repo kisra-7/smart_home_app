@@ -1,6 +1,7 @@
 package com.example.alrawi_app
 
 import android.app.Activity
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -17,6 +18,13 @@ import com.thingclips.smart.sdk.api.IResultCallback
 import com.thingclips.smart.home.sdk.callback.IThingGetHomeListCallback
 import com.thingclips.smart.home.sdk.callback.IThingHomeResultCallback
 import com.thingclips.smart.home.sdk.bean.HomeBean
+
+// ✅ Typed QR APIs (fix compile errors)
+import com.thingclips.smart.sdk.bean.QrScanBean
+import com.thingclips.smart.sdk.bean.DeviceBean
+import com.thingclips.smart.sdk.api.IThingDataCallback
+import com.thingclips.smart.sdk.api.IThingSmartActivatorListener
+import com.thingclips.smart.home.sdk.builder.ThingQRCodeActivatorBuilder
 
 object TuyaBridge {
 
@@ -143,7 +151,6 @@ object TuyaBridge {
                 }
 
                 "logout" -> {
-                    // ✅ FIX: your SDK expects ILogoutCallback (not IResultCallback)
                     ThingHomeSdk.getUserInstance().logout(object : ILogoutCallback {
                         override fun onSuccess() {
                             result.success(true)
@@ -159,22 +166,27 @@ object TuyaBridge {
                 // Home
                 // ==========================================================
                 "getHomeList" -> {
-                    ThingHomeSdk.getHomeManagerInstance().queryHomeList(object : IThingGetHomeListCallback {
-                        override fun onSuccess(homeBeans: MutableList<HomeBean>?) {
-                            val list = (homeBeans ?: mutableListOf()).map { hb ->
-                                hashMapOf<String, Any?>(
-                                    "homeId" to hb.homeId,
-                                    "name" to hb.name,
-                                    "geoName" to hb.geoName
+                    ThingHomeSdk.getHomeManagerInstance()
+                        .queryHomeList(object : IThingGetHomeListCallback {
+                            override fun onSuccess(homeBeans: MutableList<HomeBean>?) {
+                                val list = (homeBeans ?: mutableListOf()).map { hb ->
+                                    hashMapOf<String, Any?>(
+                                        "homeId" to hb.homeId,
+                                        "name" to hb.name,
+                                        "geoName" to hb.geoName
+                                    )
+                                }
+                                result.success(list)
+                            }
+
+                            override fun onError(errorCode: String?, error: String?) {
+                                result.error(
+                                    errorCode ?: "HOME_LIST_FAILED",
+                                    error ?: "queryHomeList failed",
+                                    null
                                 )
                             }
-                            result.success(list)
-                        }
-
-                        override fun onError(errorCode: String?, error: String?) {
-                            result.error(errorCode ?: "HOME_LIST_FAILED", error ?: "queryHomeList failed", null)
-                        }
-                    })
+                        })
                 }
 
                 "ensureHome" -> {
@@ -182,52 +194,61 @@ object TuyaBridge {
                     val geoName = call.argument<String>("geoName") ?: "Oman"
                     val rooms = call.argument<List<String>>("rooms") ?: listOf("Living Room")
 
-                    ThingHomeSdk.getHomeManagerInstance().queryHomeList(object : IThingGetHomeListCallback {
-                        override fun onSuccess(homeBeans: MutableList<HomeBean>?) {
-                            val existing = homeBeans?.firstOrNull()
-                            if (existing != null) {
-                                result.success(
-                                    hashMapOf<String, Any?>(
-                                        "homeId" to existing.homeId,
-                                        "name" to existing.name,
-                                        "geoName" to existing.geoName
+                    ThingHomeSdk.getHomeManagerInstance()
+                        .queryHomeList(object : IThingGetHomeListCallback {
+                            override fun onSuccess(homeBeans: MutableList<HomeBean>?) {
+                                val existing = homeBeans?.firstOrNull()
+                                if (existing != null) {
+                                    result.success(
+                                        hashMapOf<String, Any?>(
+                                            "homeId" to existing.homeId,
+                                            "name" to existing.name,
+                                            "geoName" to existing.geoName
+                                        )
                                     )
+                                    return
+                                }
+
+                                ThingHomeSdk.getHomeManagerInstance().createHome(
+                                    name,
+                                    0.0,
+                                    0.0,
+                                    geoName,
+                                    rooms,
+                                    object : IThingHomeResultCallback {
+                                        override fun onSuccess(bean: HomeBean?) {
+                                            if (bean == null) {
+                                                result.error("CREATE_HOME_FAILED", "HomeBean is null", null)
+                                                return
+                                            }
+                                            result.success(
+                                                hashMapOf<String, Any?>(
+                                                    "homeId" to bean.homeId,
+                                                    "name" to bean.name,
+                                                    "geoName" to bean.geoName
+                                                )
+                                            )
+                                        }
+
+                                        override fun onError(errorCode: String?, errorMsg: String?) {
+                                            result.error(
+                                                errorCode ?: "CREATE_HOME_FAILED",
+                                                errorMsg ?: "createHome failed",
+                                                null
+                                            )
+                                        }
+                                    }
                                 )
-                                return
                             }
 
-                            ThingHomeSdk.getHomeManagerInstance().createHome(
-                                name,
-                                0.0,
-                                0.0,
-                                geoName,
-                                rooms,
-                                object : IThingHomeResultCallback {
-                                    override fun onSuccess(bean: HomeBean?) {
-                                        if (bean == null) {
-                                            result.error("CREATE_HOME_FAILED", "HomeBean is null", null)
-                                            return
-                                        }
-                                        result.success(
-                                            hashMapOf<String, Any?>(
-                                                "homeId" to bean.homeId,
-                                                "name" to bean.name,
-                                                "geoName" to bean.geoName
-                                            )
-                                        )
-                                    }
-
-                                    override fun onError(errorCode: String?, errorMsg: String?) {
-                                        result.error(errorCode ?: "CREATE_HOME_FAILED", errorMsg ?: "createHome failed", null)
-                                    }
-                                }
-                            )
-                        }
-
-                        override fun onError(errorCode: String?, error: String?) {
-                            result.error(errorCode ?: "HOME_LIST_FAILED", error ?: "queryHomeList failed", null)
-                        }
-                    })
+                            override fun onError(errorCode: String?, error: String?) {
+                                result.error(
+                                    errorCode ?: "HOME_LIST_FAILED",
+                                    error ?: "queryHomeList failed",
+                                    null
+                                )
+                            }
+                        })
                 }
 
                 // ==========================================================
@@ -239,14 +260,33 @@ object TuyaBridge {
                         return
                     }
 
+                    val homeId = (call.argument<Number>("homeId") ?: 0).toLong()
+
                     mainHandler.post {
                         try {
-                            val scanClazz = Class.forName("com.thingclips.smart.activator.scan.qrcode.ScanManager")
+                            val scanClazz =
+                                Class.forName("com.thingclips.smart.activator.scan.qrcode.ScanManager")
                             val instance = scanClazz.getDeclaredField("INSTANCE").get(null)
 
+                            // Prefer openScan(Context, Bundle)
+                            val openScanWithBundle = scanClazz.methods.firstOrNull {
+                                it.name == "openScan" && it.parameterTypes.size == 2
+                            }
+
+                            if (openScanWithBundle != null) {
+                                val bundle = Bundle().apply {
+                                    putLong("homeId", homeId)
+                                    putInt("homeId_int", homeId.toInt())
+                                }
+                                openScanWithBundle.invoke(instance, activity, bundle)
+                                result.success(true)
+                                return@post
+                            }
+
+                            // Fallback openScan(Context)
                             val openScan = scanClazz.methods.firstOrNull {
                                 it.name == "openScan" && it.parameterTypes.size == 1
-                            } ?: throw NoSuchMethodException("ScanManager.openScan(Context) not found")
+                            } ?: throw NoSuchMethodException("ScanManager.openScan(Context/*,Bundle*/) not found")
 
                             openScan.invoke(instance, activity)
                             result.success(true)
@@ -273,6 +313,116 @@ object TuyaBridge {
                 }
 
                 // ==========================================================
+                // ✅ Stable QR pairing (Direct SDK) — FIXED TYPES
+                // ==========================================================
+                "pairDeviceByQr" -> {
+                    val activity = currentActivity ?: run {
+                        result.error("NO_ACTIVITY", "No foreground Activity available", null)
+                        return
+                    }
+
+                    val homeId = (call.argument<Number>("homeId") ?: 0).toLong()
+                    val qrUrl = (call.argument<String>("qrUrl") ?: "").trim()
+                    val timeout = (call.argument<Number>("timeout") ?: 100).toInt()
+
+                    if (homeId <= 0 || qrUrl.isEmpty()) {
+                        result.error("BAD_ARGS", "homeId and qrUrl are required", null)
+                        return
+                    }
+
+                    mainHandler.post {
+                        try {
+                            ThingHomeSdk.getActivatorInstance().deviceQrCodeParse(
+                                qrUrl,
+                                object : IThingDataCallback<QrScanBean> {
+                                    override fun onSuccess(data: QrScanBean?) {
+                                        try {
+                                            val uuid = data?.actionData?.uuid
+                                            if (uuid.isNullOrBlank()) {
+                                                emit(
+                                                    "tuya_gw_error",
+                                                    hashMapOf("code" to "QR_PARSE_FAILED", "msg" to "UUID not found")
+                                                )
+                                                result.error("QR_PARSE_FAILED", "UUID not found in QrScanBean", null)
+                                                return
+                                            }
+
+                                            val builder = ThingQRCodeActivatorBuilder()
+                                                .setContext(activity)
+                                                .setHomeId(homeId)
+                                                .setUuid(uuid)
+                                                .setTimeOut(timeout)
+                                                .setListener(object : IThingSmartActivatorListener {
+                                                    override fun onError(errorCode: String?, errorMsg: String?) {
+                                                        emit(
+                                                            "tuya_gw_error",
+                                                            hashMapOf(
+                                                                "code" to (errorCode ?: "QR_ACTIVE_ERROR"),
+                                                                "msg" to (errorMsg ?: "activation failed")
+                                                            )
+                                                        )
+                                                    }
+
+                                                    override fun onActiveSuccess(devResp: DeviceBean?) {
+                                                        if (devResp != null) {
+                                                            emit(
+                                                                "tuya_gw_success",
+                                                                hashMapOf(
+                                                                    "devId" to devResp.devId,
+                                                                    "name" to devResp.name,
+                                                                    "isOnline" to devResp.isOnline
+                                                                )
+                                                            )
+                                                        } else {
+                                                            emit("tuya_gw_success", hashMapOf("devId" to "", "name" to "", "isOnline" to false))
+                                                        }
+                                                    }
+
+                                                    override fun onStep(step: String?, data: Any?) {
+                                                        // Optional: emit progress
+                                                    }
+                                                })
+
+                                            val activator =
+                                                ThingHomeSdk.getActivatorInstance().newQRCodeDevActivator(builder)
+                                            activator.start()
+
+                                            // start() is async; success comes via listener
+                                            result.success(true)
+                                        } catch (t: Throwable) {
+                                            Log.e(TAG, "pairDeviceByQr start failed", t)
+                                            emit(
+                                                "tuya_gw_error",
+                                                hashMapOf("code" to "QR_ACTIVE_ERROR", "msg" to (t.message ?: "unknown"))
+                                            )
+                                            result.error("QR_ACTIVE_ERROR", t.message, null)
+                                        }
+                                    }
+
+                                    override fun onError(errorCode: String?, errorMessage: String?) {
+                                        emit(
+                                            "tuya_gw_error",
+                                            hashMapOf(
+                                                "code" to (errorCode ?: "QR_PARSE_FAILED"),
+                                                "msg" to (errorMessage ?: "parse failed")
+                                            )
+                                        )
+                                        result.error(errorCode ?: "QR_PARSE_FAILED", errorMessage ?: "parse failed", null)
+                                    }
+                                }
+                            )
+                        } catch (t: Throwable) {
+                            Log.e(TAG, "pairDeviceByQr failed", t)
+                            emit(
+                                "tuya_gw_error",
+                                hashMapOf("code" to "QR_PAIR_FAILED", "msg" to (t.message ?: "unknown"))
+                            )
+                            result.error("QR_PAIR_FAILED", t.message, null)
+                        }
+                    }
+                }
+
+                // ==========================================================
                 // Compatibility / placeholders (keep Dart stable)
                 // ==========================================================
                 "startZigbeeGatewayPairing" -> {
@@ -288,10 +438,6 @@ object TuyaBridge {
                         onOk = { result.success(true) },
                         onErr = { t -> result.error("GW_PAIRING_FAILED", t.message, null) }
                     )
-                }
-
-                "pairDeviceByQr" -> {
-                    result.error("NOT_SUPPORTED", "Use BizBundle QR scan + Add Device UI flow", null)
                 }
 
                 "startZigbeeSubDevicePairing" -> {
@@ -323,7 +469,8 @@ object TuyaBridge {
                     }
                     mainHandler.post {
                         try {
-                            val scanClazz = Class.forName("com.thingclips.smart.activator.scan.qrcode.ScanManager")
+                            val scanClazz =
+                                Class.forName("com.thingclips.smart.activator.scan.qrcode.ScanManager")
                             val instance = scanClazz.getDeclaredField("INSTANCE").get(null)
                             val openScan = scanClazz.methods.firstOrNull {
                                 it.name == "openScan" && it.parameterTypes.size == 1

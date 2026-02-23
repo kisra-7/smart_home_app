@@ -10,17 +10,11 @@ object BizBundleActivatorUi {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     /**
-     * IMPORTANT:
      * Your APK shows the real class is under:
      * com.thingclips.smart.activator.plug.mesosphere.ThingDeviceActivatorManager
-     *
-     * We still keep fallback candidates just in case.
      */
     private val managerClassCandidates = listOf(
-        // ✅ Found in your APK (dex strings output)
         "com.thingclips.smart.activator.plug.mesosphere.ThingDeviceActivatorManager",
-
-        // Fallbacks (docs / older namespaces)
         "com.thingclips.smart.activator.ThingDeviceActivatorManager",
         "com.tuya.smart.activator.ThingDeviceActivatorManager"
     )
@@ -28,6 +22,7 @@ object BizBundleActivatorUi {
     fun openAddDevice(
         activity: Activity,
         homeId: Long,
+        onDevicesAdded: ((List<String>) -> Unit)? = null,
         onOk: () -> Unit,
         onErr: (Throwable) -> Unit
     ) {
@@ -45,12 +40,33 @@ object BizBundleActivatorUi {
 
                 val instance = tryGetKotlinObjectInstance(mgrClazz)
 
-                // Try overload #1: startDeviceActiveAction(Activity, long)
-                val overload2 = mgrClazz.methods.firstOrNull { m ->
-                    m.name == "startDeviceActiveAction" &&
-                            m.parameterTypes.size == 2 &&
+                // 1) Best-case: startDeviceActiveAction(Activity, long, Listener)
+                if (onDevicesAdded != null) {
+                    val listenerProxy = buildDeviceActiveListenerProxy(mgrClazz, onDevicesAdded)
+
+                    val overload3 = mgrClazz.methods.firstOrNull { m ->
+                        m.name == "startDeviceActiveAction" &&
+                            m.parameterTypes.size == 3 &&
                             Activity::class.java.isAssignableFrom(m.parameterTypes[0]) &&
                             (m.parameterTypes[1] == java.lang.Long.TYPE || m.parameterTypes[1] == java.lang.Long::class.java)
+                    }
+
+                    if (overload3 != null && listenerProxy != null) {
+                        overload3.invoke(instance, activity, homeId, listenerProxy)
+                        onOk()
+                        return@post
+                    }
+
+                    // 2) Otherwise, attach listener via addListener(...) if possible.
+                    tryAttachDeviceActiveListener(mgrClazz, instance, onDevicesAdded)
+                }
+
+                // 3) Try overload: startDeviceActiveAction(Activity, long)
+                val overload2 = mgrClazz.methods.firstOrNull { m ->
+                    m.name == "startDeviceActiveAction" &&
+                        m.parameterTypes.size == 2 &&
+                        Activity::class.java.isAssignableFrom(m.parameterTypes[0]) &&
+                        (m.parameterTypes[1] == java.lang.Long.TYPE || m.parameterTypes[1] == java.lang.Long::class.java)
                 }
 
                 if (overload2 != null) {
@@ -59,20 +75,19 @@ object BizBundleActivatorUi {
                     return@post
                 }
 
-                // Otherwise: setHomeId(long) if exists
+                // 4) Otherwise: setHomeId(long) if exists then startDeviceActiveAction(Activity)
                 mgrClazz.methods.firstOrNull { m ->
                     m.name == "setHomeId" &&
-                            m.parameterTypes.size == 1 &&
-                            (m.parameterTypes[0] == java.lang.Long.TYPE || m.parameterTypes[0] == java.lang.Long::class.java)
+                        m.parameterTypes.size == 1 &&
+                        (m.parameterTypes[0] == java.lang.Long.TYPE || m.parameterTypes[0] == java.lang.Long::class.java)
                 }?.invoke(instance, homeId)
 
-                // Then: startDeviceActiveAction(Activity)
                 val overload1 = mgrClazz.methods.firstOrNull { m ->
                     m.name == "startDeviceActiveAction" &&
-                            m.parameterTypes.size == 1 &&
-                            Activity::class.java.isAssignableFrom(m.parameterTypes[0])
+                        m.parameterTypes.size == 1 &&
+                        Activity::class.java.isAssignableFrom(m.parameterTypes[0])
                 } ?: throw NoSuchMethodException(
-                    "startDeviceActiveAction(Activity/Activity,long) not found on ${mgrClazz.name}"
+                    "startDeviceActiveAction(Activity/Activity,long/Activity,long,listener) not found on ${mgrClazz.name}"
                 )
 
                 overload1.invoke(instance, activity)
@@ -84,20 +99,83 @@ object BizBundleActivatorUi {
         }
     }
 
+    private fun buildDeviceActiveListenerProxy(
+        mgrClazz: Class<*>,
+        onDevicesAdded: (List<String>) -> Unit
+    ): Any? {
+        // Try to find the listener type from a startDeviceActiveAction overload
+        val anyListenerParam = mgrClazz.methods
+            .firstOrNull { it.name == "startDeviceActiveAction" && it.parameterTypes.size == 3 }
+            ?.parameterTypes
+            ?.getOrNull(2)
+            ?: return null
+
+        return java.lang.reflect.Proxy.newProxyInstance(
+            anyListenerParam.classLoader,
+            arrayOf(anyListenerParam)
+        ) { _, method, args ->
+            try {
+                if (method.name.equals("onDevicesAdd", ignoreCase = true)) {
+                    val first = args?.firstOrNull()
+                    val devIds = when (first) {
+                        is List<*> -> first.filterIsInstance<String>()
+                        is Array<*> -> first.filterIsInstance<String>()
+                        else -> emptyList()
+                    }
+                    if (devIds.isNotEmpty()) onDevicesAdded(devIds)
+                }
+            } catch (_: Throwable) {
+            }
+            null
+        }
+    }
+
+    private fun tryAttachDeviceActiveListener(
+        mgrClazz: Class<*>,
+        instance: Any?,
+        onDevicesAdded: (List<String>) -> Unit
+    ) {
+        val addListener = mgrClazz.methods.firstOrNull { m ->
+            m.name == "addListener" && m.parameterTypes.size == 1
+        } ?: return
+
+        val listenerInterface = addListener.parameterTypes[0]
+
+        val proxy = java.lang.reflect.Proxy.newProxyInstance(
+            listenerInterface.classLoader,
+            arrayOf(listenerInterface)
+        ) { _, method, args ->
+            try {
+                if (method.name.equals("onDevicesAdd", ignoreCase = true)) {
+                    val first = args?.firstOrNull()
+                    val devIds = when (first) {
+                        is List<*> -> first.filterIsInstance<String>()
+                        is Array<*> -> first.filterIsInstance<String>()
+                        else -> emptyList()
+                    }
+                    if (devIds.isNotEmpty()) onDevicesAdded(devIds)
+                }
+            } catch (_: Throwable) {
+            }
+            null
+        }
+
+        try {
+            addListener.invoke(instance, proxy)
+        } catch (_: Throwable) {
+        }
+    }
+
     private fun resolveFirstExistingClass(candidates: List<String>): Class<*>? {
         for (name in candidates) {
             try {
                 return Class.forName(name)
             } catch (_: Throwable) {
-                // keep trying
             }
         }
         return null
     }
 
-    /**
-     * Works for Kotlin `object` singletons (INSTANCE) and also for static-method classes.
-     */
     private fun tryGetKotlinObjectInstance(clazz: Class<*>): Any? {
         return try {
             clazz.getDeclaredField("INSTANCE").get(null)

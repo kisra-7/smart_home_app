@@ -1,12 +1,14 @@
 import 'dart:async';
 
+import 'package:alrawi_app/ui/widgets/device_card.dart';
+import 'package:alrawi_app/ui/widgets/section_title.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../tuya/controllers/home_hub_controller.dart';
 import '../tuya/tuya_platform.dart';
+import '../tuya/controllers/home_hub_controller.dart';
 import 'auth_page.dart';
-
 class HomeHubPage extends ConsumerStatefulWidget {
   const HomeHubPage({super.key});
 
@@ -14,60 +16,134 @@ class HomeHubPage extends ConsumerStatefulWidget {
   ConsumerState<HomeHubPage> createState() => _HomeHubPageState();
 }
 
-class _HomeHubPageState extends ConsumerState<HomeHubPage> {
-  // Captured after gateway pairing success (optional future use)
-  final TextEditingController _gwDevIdCtrl = TextEditingController();
+class _HomeHubPageState extends ConsumerState<HomeHubPage> with WidgetsBindingObserver {
+  static const _bg = Color(0xFFF4F6FA);
 
+  final _gwDevIdCtrl = TextEditingController();
   bool _gatewayAdded = false;
   String _gatewayName = "";
   bool _gatewayOnline = false;
 
-  // Wait until app returns to RESUMED (helps after camera / native UI)
-  Future<void> _waitUntilResumed() async {
-    if (!mounted) return;
-
-    final current = WidgetsBinding.instance.lifecycleState;
-    if (current == AppLifecycleState.resumed) return;
-
-    final completer = Completer<void>();
-    late final _LifeObserver observer;
-
-    observer = _LifeObserver((state) {
-      if (state == AppLifecycleState.resumed && !completer.isCompleted) {
-        WidgetsBinding.instance.removeObserver(observer);
-        completer.complete();
-      }
-    });
-
-    WidgetsBinding.instance.addObserver(observer);
-    await completer.future;
-  }
-
   @override
   void initState() {
     super.initState();
-    // Load homes immediately
+    WidgetsBinding.instance.addObserver(this);
+
+    // Re-load homes once the page is alive.
     Future.microtask(() {
       ref.read(homeHubControllerProvider.notifier).loadHomes(autoPickFirst: true);
+    });
+
+    // Optional: listen for native events if your native bridge emits them.
+    TuyaPlatform.setEventHandler((MethodCall call) async {
+      if (!mounted) return null;
+
+      if (call.method == "tuya_gw_success" && call.arguments is Map) {
+        final map = Map<String, dynamic>.from(call.arguments as Map);
+        final devId = (map["devId"] ?? "").toString();
+        final name = (map["name"] ?? "").toString();
+        final online = map["isOnline"] == true;
+
+        if (devId.isNotEmpty) {
+          setState(() {
+            _gwDevIdCtrl.text = devId;
+            _gatewayAdded = true;
+            _gatewayName = name;
+            _gatewayOnline = online;
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Gateway added ✅ devId: $devId")),
+          );
+        }
+      }
+
+      if (call.method == "tuya_gw_error" && call.arguments is Map) {
+        final map = Map<String, dynamic>.from(call.arguments as Map);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Gateway error: ${map["msg"] ?? "unknown"}")),
+        );
+      }
+
+      return null;
     });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _gwDevIdCtrl.dispose();
     super.dispose();
   }
 
-  // Brand colors extracted from your logo palette
-  static const _navy = Color(0xFF1D254B);
-  static const _blue = Color(0xFF5796CB);
-  static const _green = Color(0xFF7AB863);
-  static const _bg = Color(0xFFF5F7FB);
+  Future<void> _logout(bool busy) async {
+    if (busy) return;
+    try {
+      await TuyaPlatform.logout();
+    } catch (_) {}
+
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const AuthPage()),
+      (_) => false,
+    );
+  }
+
+  Future<void> _waitUntilResumed() async {
+    // Useful when returning from native UI (BizBundle) back to Flutter.
+    if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) return;
+
+    final completer = Completer<void>();
+    late final _LifecycleObserver observer;
+
+    observer = _LifecycleObserver(onResumed: () {
+      if (!completer.isCompleted) completer.complete();
+    });
+
+    WidgetsBinding.instance.addObserver(observer);
+    try {
+      await completer.future.timeout(const Duration(seconds: 3));
+    } catch (_) {
+      // ignore
+    } finally {
+      WidgetsBinding.instance.removeObserver(observer);
+    }
+
+    await Future.delayed(const Duration(milliseconds: 250));
+  }
+
+  Future<void> _openBizAddDevice({required bool busy}) async {
+    if (busy) return;
+    await ref.read(homeHubControllerProvider.notifier).openBizAddDevice();
+    await _waitUntilResumed();
+
+    // After returning, refresh homes list (safe).
+    ref.read(homeHubControllerProvider.notifier).loadHomes(autoPickFirst: false);
+  }
+
+  Future<void> _openBizQrScan({required bool busy}) async {
+    if (busy) return;
+    await ref.read(homeHubControllerProvider.notifier).openBizQrScan();
+    await _waitUntilResumed();
+
+    // After returning, refresh homes list (safe).
+    ref.read(homeHubControllerProvider.notifier).loadHomes(autoPickFirst: false);
+  }
 
   @override
   Widget build(BuildContext context) {
     final hubState = ref.watch(homeHubControllerProvider);
     final busy = hubState.isLoading;
+
+    ref.listen(homeHubControllerProvider, (prev, next) {
+      next.whenOrNull(
+        error: (e, _) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Error: $e")),
+          );
+        },
+      );
+    });
 
     final data = hubState.value ?? HomeHubState.empty;
     final homes = data.homes;
@@ -82,16 +158,6 @@ class _HomeHubPageState extends ConsumerState<HomeHubPage> {
         : "Added • ${_gatewayOnline ? "Online" : "Offline"}"
             "${_gatewayName.isNotEmpty ? " • $_gatewayName" : ""}"
             " • devId: $devId";
-
-    ref.listen(homeHubControllerProvider, (prev, next) {
-      next.whenOrNull(
-        error: (e, _) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Error: $e")),
-          );
-        },
-      );
-    });
 
     return Scaffold(
       backgroundColor: _bg,
@@ -126,41 +192,38 @@ class _HomeHubPageState extends ConsumerState<HomeHubPage> {
               ),
             ),
 
-            // Quick actions row (Tuya-like)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+              sliver: SliverToBoxAdapter(
                 child: Row(
                   children: [
                     Expanded(
-                      child: _PrimaryActionCard(
-                        title: "Add Device",
-                        subtitle: "Tuya UI",
-                        icon: Icons.add_circle_rounded,
-                        color: _blue,
-                        busy: busy,
-                        onTap: () => _showAddSheet(
-                          busy: busy,
-                          onBizAddDevice: () => ref
-                              .read(homeHubControllerProvider.notifier)
-                              .openBizAddDevice(),
-                          onBizQrScan: () => ref
-                              .read(homeHubControllerProvider.notifier)
-                              .openBizQrScan(),
+                      child: ElevatedButton.icon(
+                        onPressed: busy ? null : () => _openBizAddDevice(busy: busy),
+                        icon: const Icon(Icons.add),
+                        label: const Text("Add Device"),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF0B84FF),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
                         ),
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 10),
                     Expanded(
-                      child: _PrimaryActionCard(
-                        title: "Scan QR",
-                        subtitle: "Tuya Scanner",
-                        icon: Icons.qr_code_scanner_rounded,
-                        color: _green,
-                        busy: busy,
-                        onTap: () => ref
-                            .read(homeHubControllerProvider.notifier)
-                            .openBizQrScan(),
+                      child: OutlinedButton.icon(
+                        onPressed: busy ? null : () => _openBizQrScan(busy: busy),
+                        icon: const Icon(Icons.qr_code_scanner),
+                        label: const Text("Scan QR"),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
                       ),
                     ),
                   ],
@@ -168,151 +231,179 @@ class _HomeHubPageState extends ConsumerState<HomeHubPage> {
               ),
             ),
 
-            // My Home section
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 18, 16, 8),
-                child: _sectionTitle("My Home"),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+              sliver: SliverToBoxAdapter(
+                child: SectionTitle(
+                  title: "Gateway / Hub",
+                  actionText: "Options",
+                  onAction: busy ? null : () => _showGatewaySheet(busy: busy),
+                ),
               ),
             ),
-
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                child: _HubCard(
-                  title: "Gateway / Hub",
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+              sliver: SliverToBoxAdapter(
+                child: DeviceCard(
+                  icon: Icons.hub,
+                  title: "Gateway",
                   subtitle: gatewaySubtitle,
-                  busy: busy,
-                  highlight: devId.isNotEmpty,
-                  onTap: () => _showAddSheet(
-                    busy: busy,
-                    onBizAddDevice: () =>
-                        ref.read(homeHubControllerProvider.notifier).openBizAddDevice(),
-                    onBizQrScan: () =>
-                        ref.read(homeHubControllerProvider.notifier).openBizQrScan(),
-                  ),
+                  badgeText: devId.isEmpty ? "Not added" : (_gatewayOnline ? "Online" : "Offline"),
+                  badgeColor: devId.isEmpty
+                      ? Colors.grey
+                      : (_gatewayOnline ? Colors.green : Colors.orange),
+                  onTap: busy ? null : () => _showGatewaySheet(busy: busy),
+                  trailing: busy
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : null,
                 ),
               ),
             ),
 
             if (_gatewayAdded && devId.isNotEmpty)
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                  child: _StatusPill(
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                sliver: SliverToBoxAdapter(
+                  child: _statusPill(
                     icon: Icons.check_circle,
                     text: "Gateway added successfully",
-                    color: _green,
                   ),
                 ),
               ),
 
-            // Devices section (Tuya-like empty state)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
-                child: _sectionTitle("Devices"),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+              sliver: SliverToBoxAdapter(
+                child: const SectionTitle(title: "Devices"),
               ),
             ),
 
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                child: _EmptyDevicesCard(
-                  onAdd: busy
-                      ? null
-                      : () => _showAddSheet(
-                            busy: busy,
-                            onBizAddDevice: () => ref
-                                .read(homeHubControllerProvider.notifier)
-                                .openBizAddDevice(),
-                            onBizQrScan: () => ref
-                                .read(homeHubControllerProvider.notifier)
-                                .openBizQrScan(),
-                          ),
-                ),
+            // For now your platform layer doesn’t expose “device list”, so we show placeholder.
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+              sliver: SliverToBoxAdapter(
+                child: _emptyDevicesCard(),
               ),
             ),
-
-            const SliverToBoxAdapter(child: SizedBox(height: 24)),
           ],
         ),
       ),
-
-      // Floating action similar to Tuya “+”
-      floatingActionButton: FloatingActionButton(
-        onPressed: busy
-            ? null
-            : () => _showAddSheet(
-                  busy: busy,
-                  onBizAddDevice: () =>
-                      ref.read(homeHubControllerProvider.notifier).openBizAddDevice(),
-                  onBizQrScan: () =>
-                      ref.read(homeHubControllerProvider.notifier).openBizQrScan(),
-                ),
-        backgroundColor: _navy,
-        foregroundColor: Colors.white,
-        child: const Icon(Icons.add),
-      ),
     );
   }
 
-  Widget _sectionTitle(String text) {
-    return Text(
-      text,
-      style: const TextStyle(
-        fontWeight: FontWeight.w900,
-        fontSize: 16,
-        color: _navy,
-      ),
-    );
-  }
-
-  Future<void> _logout(bool busy) async {
-    if (busy) return;
-    try {
-      await TuyaPlatform.logout();
-    } catch (_) {}
-    if (!mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const AuthPage()),
-      (_) => false,
-    );
-  }
-
-  Future<void> _showAddSheet({
-    required bool busy,
-    required Future<void> Function() onBizAddDevice,
-    required Future<void> Function() onBizQrScan,
-  }) async {
-    if (busy) return;
-
-    await showModalBottomSheet<void>(
+  void _showGatewaySheet({required bool busy}) {
+    showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: false,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
       builder: (_) {
-        return _AddDeviceSheet(
-          navy: _navy,
-          blue: _blue,
-          green: _green,
-          onAddDevice: () async {
-            Navigator.of(context).pop();
-            await onBizAddDevice();
-            await _waitUntilResumed();
-          },
-          onScanQr: () async {
-            Navigator.of(context).pop();
-            await onBizQrScan();
-            await _waitUntilResumed();
-          },
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 6),
+              const Text(
+                "Gateway Actions",
+                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+              ),
+              const SizedBox(height: 14),
+              ListTile(
+                leading: const Icon(Icons.add),
+                title: const Text("Add Device (Tuya UI)"),
+                subtitle: const Text("Recommended: full Tuya pairing flow"),
+                onTap: busy
+                    ? null
+                    : () async {
+                        Navigator.pop(context);
+                        await _openBizAddDevice(busy: false);
+                      },
+              ),
+              ListTile(
+                leading: const Icon(Icons.qr_code_scanner),
+                title: const Text("Scan QR (Tuya UI)"),
+                subtitle: const Text("Opens native QR scanner"),
+                onTap: busy
+                    ? null
+                    : () async {
+                        Navigator.pop(context);
+                        await _openBizQrScan(busy: false);
+                      },
+              ),
+
+              // If you later re-enable Direct SDK QR pairing (native side),
+              // you can add a stable QR fallback button here again.
+
+              const SizedBox(height: 10),
+            ],
+          ),
         );
       },
+    );
+  }
+
+  Widget _statusPill({required IconData icon, required String text}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEAF7EF),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.green.withOpacity(0.25)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.check_circle, color: Colors.green),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _emptyDevicesCard() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black12),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.devices_other, color: Colors.black54),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              "Devices list will appear here.\nNext step: expose device list from native (ThingHomeSdk) to Flutter.",
+              style: TextStyle(color: Colors.black54),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
 class _TopHeader extends StatelessWidget {
+  final String title;
+  final List<Map<String, dynamic>> homes;
+  final bool busy;
+  final VoidCallback onRefresh;
+  final ValueChanged<int> onSelectHome;
+  final VoidCallback onLogout;
+
   const _TopHeader({
     required this.title,
     required this.homes,
@@ -322,620 +413,73 @@ class _TopHeader extends StatelessWidget {
     required this.onLogout,
   });
 
-  final String title;
-  final List<Map<String, dynamic>> homes;
-  final bool busy;
-  final VoidCallback onRefresh;
-  final ValueChanged<int> onSelectHome;
-  final VoidCallback onLogout;
-
-  static const _navy = Color(0xFF1D254B);
-  static const _blue = Color(0xFF5796CB);
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [_navy, _blue],
-        ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                // Logo (safe: does not crash if asset missing)
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Container(
-                    width: 44,
-                    height: 44,
-                    color: Colors.white.withOpacity(0.12),
-                    alignment: Alignment.center,
-                    child: Image.asset(
-                      "assets/images/alrawi_black.jpeg", // <-- Put your logo here (recommended)
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) {
-                        return const Icon(Icons.home_rounded, color: Colors.white);
-                      },
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w900,
-                      fontSize: 18,
-                      color: Colors.white,
-                      letterSpacing: 0.3,
-                    ),
-                  ),
-                ),
-                IconButton(
-                  onPressed: busy ? null : onRefresh,
-                  icon: const Icon(Icons.refresh_rounded),
-                  color: Colors.white,
-                ),
-                IconButton(
-                  onPressed: busy ? null : onLogout,
-                  icon: const Icon(Icons.logout_rounded),
-                  color: Colors.white,
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-
-            // Home selector pill (Tuya-like)
-            Row(
-              children: [
-                Expanded(
-                  child: _HomePickerPill(
-                    homes: homes,
-                    busy: busy,
-                    onSelectHome: onSelectHome,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _HomePickerPill extends StatelessWidget {
-  const _HomePickerPill({
-    required this.homes,
-    required this.busy,
-    required this.onSelectHome,
-  });
-
-  final List<Map<String, dynamic>> homes;
-  final bool busy;
-  final ValueChanged<int> onSelectHome;
-
-  @override
-  Widget build(BuildContext context) {
-    final canPick = homes.isNotEmpty && !busy;
-
-    return Container(
-      height: 46,
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.14),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withOpacity(0.20)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.location_on_rounded, color: Colors.white),
-          const SizedBox(width: 10),
-          const Expanded(
-            child: Text(
-              "Homes",
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-          if (homes.isNotEmpty)
-            PopupMenuButton<int>(
-              enabled: canPick,
-              tooltip: "Switch Home",
-              onSelected: onSelectHome,
-              itemBuilder: (_) => homes
-                  .map(
-                    (h) => PopupMenuItem<int>(
-                      value: (h["homeId"] as num).toInt(),
-                      child: Text((h["name"] ?? "Home").toString()),
-                    ),
-                  )
-                  .toList(),
-              child: Row(
-                children: [
-                  Text(
-                    canPick ? "Switch" : "Loading…",
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  const Icon(Icons.expand_more_rounded, color: Colors.white),
-                ],
-              ),
-            )
-          else
-            const Text(
-              "No homes",
-              style: TextStyle(
-                color: Colors.white70,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PrimaryActionCard extends StatelessWidget {
-  const _PrimaryActionCard({
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-    required this.color,
-    required this.onTap,
-    required this.busy,
-  });
-
-  final String title;
-  final String subtitle;
-  final IconData icon;
-  final Color color;
-  final VoidCallback onTap;
-  final bool busy;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: busy ? null : onTap,
-      borderRadius: BorderRadius.circular(16),
-      child: Ink(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.black12.withOpacity(0.06)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 18,
-              offset: const Offset(0, 10),
-            ),
-          ],
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-          child: Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(icon, color: color),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 14,
-                        color: Color(0xFF1D254B),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12,
-                        color: Colors.black.withOpacity(0.55),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (busy)
-                const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              else
-                const Icon(Icons.chevron_right_rounded, color: Colors.black38),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _HubCard extends StatelessWidget {
-  const _HubCard({
-    required this.title,
-    required this.subtitle,
-    required this.busy,
-    required this.onTap,
-    required this.highlight,
-  });
-
-  final String title;
-  final String subtitle;
-  final bool busy;
-  final VoidCallback onTap;
-  final bool highlight;
-
-  static const _navy = Color(0xFF1D254B);
-
-  @override
-  Widget build(BuildContext context) {
-    final border = highlight ? const Color(0x337AB863) : Colors.black12.withOpacity(0.08);
-
-    return InkWell(
-      onTap: busy ? null : onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Ink(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: border),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 18,
-              offset: const Offset(0, 10),
-            ),
-          ],
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-          child: Row(
-            children: [
-              Container(
-                width: 46,
-                height: 46,
-                decoration: BoxDecoration(
-                  color: _navy.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Icon(Icons.hub_rounded, color: _navy),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 14,
-                        color: _navy,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      subtitle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12,
-                        color: Colors.black.withOpacity(0.55),
-                        height: 1.2,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 10),
-              busy
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.chevron_right_rounded, color: Colors.black38),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _EmptyDevicesCard extends StatelessWidget {
-  const _EmptyDevicesCard({required this.onAdd});
-  final VoidCallback? onAdd;
-
-  static const _navy = Color(0xFF1D254B);
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.black12.withOpacity(0.08)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 18,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Icon(Icons.devices_other_rounded, size: 44, color: _navy.withOpacity(0.50)),
-          const SizedBox(height: 10),
-          const Text(
-            "No devices yet",
-            style: TextStyle(
-              fontWeight: FontWeight.w900,
-              fontSize: 14,
-              color: _navy,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            "Add your gateway, then pair Zigbee devices from the same Tuya UI.",
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontWeight: FontWeight.w700,
-              fontSize: 12,
-              color: Colors.black.withOpacity(0.55),
-              height: 1.25,
-            ),
-          ),
-          const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: onAdd,
-              icon: const Icon(Icons.add),
-              label: const Text("Add Device"),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _navy,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StatusPill extends StatelessWidget {
-  const _StatusPill({
-    required this.icon,
-    required this.text,
-    required this.color,
-  });
-
-  final IconData icon;
-  final String text;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.22)),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, color: color),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              text,
-              style: TextStyle(
-                fontWeight: FontWeight.w900,
-                color: Colors.black.withOpacity(0.75),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _AddDeviceSheet extends StatelessWidget {
-  const _AddDeviceSheet({
-    required this.navy,
-    required this.blue,
-    required this.green,
-    required this.onAddDevice,
-    required this.onScanQr,
-  });
-
-  final Color navy;
-  final Color blue;
-  final Color green;
-  final Future<void> Function() onAddDevice;
-  final Future<void> Function() onScanQr;
-
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(22),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.18),
-              blurRadius: 30,
-              offset: const Offset(0, 18),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0B84FF),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.home_rounded, color: Colors.white),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (homes.isNotEmpty)
+                  PopupMenuButton<int>(
+                    tooltip: "Switch Home",
+                    onSelected: onSelectHome,
+                    itemBuilder: (_) => homes
+                        .map(
+                          (h) => PopupMenuItem<int>(
+                            value: (h["homeId"] as num).toInt(),
+                            child: Text((h["name"] ?? "Home").toString()),
+                          ),
+                        )
+                        .toList(),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 6),
+                      child: Icon(Icons.expand_more),
+                    ),
+                  ),
+              ],
             ),
-          ],
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 42,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.black12,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                "Add device",
-                style: TextStyle(
-                  fontWeight: FontWeight.w900,
-                  fontSize: 16,
-                  color: Color(0xFF1D254B),
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                "Choose how you want to pair.",
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 12,
-                  color: Colors.black.withOpacity(0.55),
-                ),
-              ),
-              const SizedBox(height: 14),
-              _sheetButton(
-                context,
-                icon: Icons.add_circle_rounded,
-                title: "Add Device (Tuya UI)",
-                subtitle: "Wi-Fi / Zigbee / BLE flows",
-                color: blue,
-                onTap: onAddDevice,
-              ),
-              const SizedBox(height: 10),
-              _sheetButton(
-                context,
-                icon: Icons.qr_code_scanner_rounded,
-                title: "Scan QR (Tuya UI)",
-                subtitle: "Use the native QR scanner",
-                color: green,
-                onTap: onScanQr,
-              ),
-            ],
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _sheetButton(
-    BuildContext context, {
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required Color color,
-    required Future<void> Function() onTap,
-  }) {
-    return InkWell(
-      onTap: () => onTap(),
-      borderRadius: BorderRadius.circular(16),
-      child: Ink(
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.10),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: color.withOpacity(0.20)),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-          child: Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.85),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(icon, color: color),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 14,
-                        color: Color(0xFF1D254B),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12,
-                        color: Colors.black.withOpacity(0.55),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Icon(Icons.chevron_right_rounded, color: Colors.black38),
-            ],
+          IconButton(
+            onPressed: busy ? null : onRefresh,
+            icon: const Icon(Icons.refresh),
           ),
-        ),
+          IconButton(
+            onPressed: onLogout,
+            icon: const Icon(Icons.logout),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _LifeObserver extends WidgetsBindingObserver {
-  _LifeObserver(this.onState);
-  final void Function(AppLifecycleState state) onState;
+class _LifecycleObserver extends WidgetsBindingObserver {
+  final VoidCallback onResumed;
+
+  _LifecycleObserver({required this.onResumed});
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    onState(state);
+    if (state == AppLifecycleState.resumed) onResumed();
   }
 }

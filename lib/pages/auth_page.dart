@@ -24,47 +24,6 @@ class _AuthPageState extends State<AuthPage> {
   String get _pass => _passCtrl.text;
   String get _code => _codeCtrl.text.trim();
 
-  Future<void> _run(Future<void> Function() fn) async {
-    if (!mounted) return;
-    FocusScope.of(context).unfocus();
-    setState(() => _busy = true);
-    try {
-      await fn();
-    } catch (e) {
-      debugPrint("❌ Auth error: $e");
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("Error: $e")));
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _autoCheck() async {
-    try {
-      final loggedIn = await TuyaPlatform.isLoggedIn();
-      debugPrint("🔎 Auto login check => $loggedIn");
-      if (!mounted) return;
-
-      if (loggedIn) {
-        await TuyaPlatform.ensureHome(
-          name: "My Home",
-          geoName: "Oman",
-          rooms: const ["Living Room"],
-        );
-        if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const HomeHubPage()),
-        );
-      }
-    } catch (e) {
-      debugPrint("❌ Auto check error: $e");
-    }
-  }
-
   @override
   void initState() {
     super.initState();
@@ -80,30 +39,152 @@ class _AuthPageState extends State<AuthPage> {
     super.dispose();
   }
 
-  Future<void> _afterLoginEnsureHomeAndGo() async {
+  Future<void> _autoCheck() async {
+    try {
+      final loggedIn = await TuyaPlatform.isLoggedIn();
+      if (!mounted) return;
+
+      if (loggedIn) {
+        await TuyaPlatform.ensureHome(
+          name: "My Home",
+          geoName: "Oman",
+          rooms: const ["Living Room"],
+        );
+        if (!mounted) return;
+
+        _goHome();
+      }
+    } catch (e) {
+      debugPrint("❌ Auto check error: $e");
+    }
+  }
+
+  void _goHome() {
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => const HomeHubPage()),
+    );
+  }
+
+  Future<void> _run(Future<void> Function() fn) async {
+    if (_busy) return;
+    FocusScope.of(context).unfocus();
+    setState(() => _busy = true);
+    try {
+      await fn();
+    } catch (e) {
+      debugPrint("❌ Auth error: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $e")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _afterAuthEnsureHomeAndGo() async {
     final info = await TuyaPlatform.ensureHome(
       name: "My Home",
       geoName: "Oman",
       rooms: const ["Living Room"],
     );
 
-    final created = info["created"] == true;
-    final homeId = info["homeId"];
-    debugPrint("🏠 ensureHome => created=$created homeId=$homeId");
+    final homeId = (info["homeId"] as num?)?.toInt();
+    debugPrint("🏠 ensureHome => homeId=$homeId");
 
     if (!mounted) return;
+    _goHome();
+  }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          created ? "Home created (ID: $homeId)" : "Home found (ID: $homeId)",
-        ),
+  Future<void> _login() async {
+    if (_country.isEmpty || _email.isEmpty || _pass.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please fill country, email, and password.")),
+      );
+      return;
+    }
+
+    await _run(() async {
+      // IMPORTANT: your TuyaPlatform.loginByEmail returns Future<void>
+      // so we just await it; if it doesn't throw, we treat it as success.
+      await TuyaPlatform.loginByEmail(
+        countryCode: _country,
+        email: _email,
+        password: _pass,
+      );
+
+      await _afterAuthEnsureHomeAndGo();
+    });
+  }
+
+  Future<void> _sendCode() async {
+    if (_country.isEmpty || _email.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please fill country and email.")),
+      );
+      return;
+    }
+
+    await _run(() async {
+      await TuyaPlatform.sendEmailCode(
+        countryCode: _country,
+        email: _email,
+        type: 1,
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Verification code sent ✅")),
+      );
+    });
+  }
+
+  Future<void> _register() async {
+    if (_country.isEmpty || _email.isEmpty || _pass.isEmpty || _code.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please fill all fields (including code).")),
+      );
+      return;
+    }
+
+    await _run(() async {
+      // IMPORTANT: your TuyaPlatform.registerEmail returns Future<void>
+      await TuyaPlatform.registerEmail(
+        countryCode: _country,
+        email: _email,
+        password: _pass,
+        code: _code,
+      );
+
+      // After registering, we login (some SDKs auto-login, but this is safe)
+      await TuyaPlatform.loginByEmail(
+        countryCode: _country,
+        email: _email,
+        password: _pass,
+      );
+
+      await _afterAuthEnsureHomeAndGo();
+    });
+  }
+
+  Widget _card({required Widget child}) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black12),
+        boxShadow: const [
+          BoxShadow(
+            blurRadius: 18,
+            color: Color(0x11000000),
+            offset: Offset(0, 10),
+          ),
+        ],
       ),
-    );
-
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const HomeHubPage()),
+      child: child,
     );
   }
 
@@ -130,19 +211,13 @@ class _AuthPageState extends State<AuthPage> {
                         borderRadius: BorderRadius.circular(12),
                         color: const Color(0xFF0B84FF),
                       ),
-                      child: const Icon(
-                        Icons.home_rounded,
-                        color: Colors.white,
-                      ),
+                      child: const Icon(Icons.home_rounded, color: Colors.white),
                     ),
                     const SizedBox(width: 12),
                     const Expanded(
                       child: Text(
                         "Alrawi Smart Home",
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w900,
-                        ),
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
                       ),
                     ),
                     if (_busy)
@@ -156,10 +231,7 @@ class _AuthPageState extends State<AuthPage> {
                 const SizedBox(height: 28),
                 Text(
                   title,
-                  style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w900,
-                  ),
+                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
                 ),
                 const SizedBox(height: 6),
                 Text(
@@ -169,6 +241,7 @@ class _AuthPageState extends State<AuthPage> {
                   style: const TextStyle(color: Colors.black54),
                 ),
                 const SizedBox(height: 18),
+
                 _card(
                   child: Column(
                     children: [
@@ -197,133 +270,71 @@ class _AuthPageState extends State<AuthPage> {
                           labelText: "Password",
                           border: const OutlineInputBorder(),
                           suffixIcon: IconButton(
-                            onPressed: _busy
-                                ? null
-                                : () => setState(() => _obscure = !_obscure),
-                            icon: Icon(
-                              _obscure
-                                  ? Icons.visibility_off
-                                  : Icons.visibility,
-                            ),
+                            onPressed: _busy ? null : () => setState(() => _obscure = !_obscure),
+                            icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
                           ),
                         ),
                       ),
+
                       if (_registerMode) ...[
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: _codeCtrl,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: "Verification code",
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
                         const SizedBox(height: 12),
                         Row(
                           children: [
                             Expanded(
-                              child: OutlinedButton(
-                                onPressed:
-                                    _busy || _country.isEmpty || _email.isEmpty
-                                    ? null
-                                    : () => _run(() async {
-                                        await TuyaPlatform.sendEmailCode(
-                                          countryCode: _country,
-                                          email: _email,
-                                          type: 1,
-                                        );
-                                        if (!mounted) return;
-                                        ScaffoldMessenger.of(
-                                          context,
-                                        ).showSnackBar(
-                                          const SnackBar(
-                                            content: Text(
-                                              "Code sent. Check your email.",
-                                            ),
-                                          ),
-                                        );
-                                      }),
-                                child: const Text("Send code"),
+                              child: TextField(
+                                controller: _codeCtrl,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(
+                                  labelText: "Email code",
+                                  border: OutlineInputBorder(),
+                                ),
                               ),
                             ),
                             const SizedBox(width: 10),
-                            Expanded(
-                              child: ElevatedButton(
-                                onPressed:
-                                    _busy ||
-                                        _country.isEmpty ||
-                                        _email.isEmpty ||
-                                        _pass.isEmpty ||
-                                        _code.isEmpty
-                                    ? null
-                                    : () => _run(() async {
-                                        final ok =
-                                            await TuyaPlatform.registerEmail(
-                                              countryCode: _country,
-                                              email: _email,
-                                              password: _pass,
-                                              code: _code,
-                                            );
-                                        if (!ok)
-                                          throw Exception("Register failed");
-
-                                        final logged =
-                                            await TuyaPlatform.loginByEmail(
-                                              countryCode: _country,
-                                              email: _email,
-                                              password: _pass,
-                                            );
-                                        if (!logged)
-                                          throw Exception(
-                                            "Login failed after register",
-                                          );
-
-                                        await _afterLoginEnsureHomeAndGo();
-                                      }),
-                                child: const Text("Register"),
+                            ElevatedButton(
+                              onPressed: _busy ? null : _sendCode,
+                              style: ElevatedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+                                backgroundColor: const Color(0xFF0B84FF),
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
                               ),
+                              child: const Text("Send"),
                             ),
                           ],
                         ),
-                      ] else ...[
-                        const SizedBox(height: 14),
-                        SizedBox(
-                          width: double.infinity,
-                          height: 48,
-                          child: ElevatedButton(
-                            onPressed:
-                                _busy ||
-                                    _country.isEmpty ||
-                                    _email.isEmpty ||
-                                    _pass.isEmpty
-                                ? null
-                                : () => _run(() async {
-                                    final ok = await TuyaPlatform.loginByEmail(
-                                      countryCode: _country,
-                                      email: _email,
-                                      password: _pass,
-                                    );
-                                    if (!ok) throw Exception("Login failed");
-                                    await _afterLoginEnsureHomeAndGo();
-                                  }),
-                            child: const Text("Sign in"),
-                          ),
-                        ),
                       ],
+
+                      const SizedBox(height: 14),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: _busy ? null : (_registerMode ? _register : _login),
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            backgroundColor: const Color(0xFF0B84FF),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: Text(_registerMode ? "Create account" : "Sign in"),
+                        ),
+                      ),
                     ],
                   ),
                 ),
+
                 const SizedBox(height: 14),
                 Center(
-                  child: GestureDetector(
-                    onTap: _busy
-                        ? null
-                        : () => setState(() => _registerMode = !_registerMode),
+                  child: TextButton(
+                    onPressed: _busy ? null : () => setState(() => _registerMode = !_registerMode),
                     child: Text(
                       _registerMode
                           ? "Already have an account? Sign in"
                           : "Don't have an account? Create one",
-                      style: const TextStyle(fontWeight: FontWeight.w800),
                     ),
                   ),
                 ),
@@ -332,25 +343,6 @@ class _AuthPageState extends State<AuthPage> {
           ),
         ),
       ),
-    );
-  }
-
-  Widget _card({required Widget child}) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.black12),
-        boxShadow: const [
-          BoxShadow(
-            blurRadius: 16,
-            offset: Offset(0, 8),
-            color: Color(0x11000000),
-          ),
-        ],
-      ),
-      child: child,
     );
   }
 }
