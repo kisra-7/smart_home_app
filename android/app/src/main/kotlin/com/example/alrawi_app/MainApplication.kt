@@ -19,7 +19,6 @@ class MainApplication : Application() {
             Log.w(TAG, "⚠️ Fresco.init failed (continuing)", t)
         }
 
-        // 1) Init Thing/Tuya core SDK (reads keys from AndroidManifest meta-data)
         try {
             ThingHomeSdk.init(this)
             ThingHomeSdk.setDebugMode(true)
@@ -29,7 +28,6 @@ class MainApplication : Application() {
             return
         }
 
-        // 2) Init BizBundle (required for activator/gateway UI)
         initBizBundleReflectively()
     }
 

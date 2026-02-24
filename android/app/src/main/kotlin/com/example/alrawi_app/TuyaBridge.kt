@@ -1,7 +1,6 @@
 package com.example.alrawi_app
 
 import android.app.Activity
-import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -18,13 +17,6 @@ import com.thingclips.smart.sdk.api.IResultCallback
 import com.thingclips.smart.home.sdk.callback.IThingGetHomeListCallback
 import com.thingclips.smart.home.sdk.callback.IThingHomeResultCallback
 import com.thingclips.smart.home.sdk.bean.HomeBean
-
-// ✅ Typed QR APIs (Direct SDK stable path)
-import com.thingclips.smart.sdk.bean.QrScanBean
-import com.thingclips.smart.sdk.bean.DeviceBean
-import com.thingclips.smart.sdk.api.IThingDataCallback
-import com.thingclips.smart.sdk.api.IThingSmartActivatorListener
-import com.thingclips.smart.home.sdk.builder.ThingQRCodeActivatorBuilder
 
 object TuyaBridge {
 
@@ -45,10 +37,10 @@ object TuyaBridge {
         if (cur === activity) activityRef = null
     }
 
-    val currentActivity: Activity?
+    private val currentActivity: Activity?
         get() = activityRef?.get()
 
-    // ---------- Channel holder ----------
+    // ---------- Channel holder (optional events) ----------
     private var channel: MethodChannel? = null
 
     @JvmStatic
@@ -56,6 +48,7 @@ object TuyaBridge {
         channel = ch
     }
 
+    @Suppress("unused")
     private fun emit(event: String, args: Any? = null) {
         try {
             channel?.invokeMethod(event, args)
@@ -64,101 +57,90 @@ object TuyaBridge {
         }
     }
 
-    // ----------------------------------------------------------
-    // ✅ IMPORTANT: BizBundle Activator Home binding (fixes relationId=0)
-    // ----------------------------------------------------------
-    private fun setBizActivatorHomeId(homeId: Long) {
-        try {
-            val clazz = Class.forName("com.thingclips.smart.activator.plug.mesosphere.ThingDeviceActivatorManager")
-            val instance = clazz.getDeclaredField("INSTANCE").get(null)
+    // ==========================================================
+    // BizBundle "current family/home" context
+    //
+    // Why:
+    // Native BizBundle QR / AddDevice UI expects a "current family" to be selected.
+    // If not shifted, BizBundle token fetching can fail with USER_GROUP_ID_IS_BLANK,
+    // leading to gateway QR bind failures (errCode=10002, relationId=0).
+    // ==========================================================
+    private fun ensureBizCurrentFamily(homeId: Long, onDone: () -> Unit) {
+        if (homeId <= 0L) {
+            onDone()
+            return
+        }
 
-            val setHomeId = clazz.methods.firstOrNull { it.name == "setHomeId" && it.parameterTypes.size == 1 }
-            if (setHomeId != null) {
-                val p = setHomeId.parameterTypes[0]
-                when (p) {
-                    java.lang.Long.TYPE, java.lang.Long::class.java -> setHomeId.invoke(instance, homeId)
-                    java.lang.Integer.TYPE, java.lang.Integer::class.java -> setHomeId.invoke(instance, homeId.toInt())
-                    else -> {
-                        // ignore
+        fun warmAndContinue() {
+            try {
+                // Warm SDK caches (and also makes sure home context exists)
+                ThingHomeSdk.newHomeInstance(homeId).getHomeDetail(object : IThingHomeResultCallback {
+                    override fun onSuccess(bean: HomeBean) {
+                        onDone()
                     }
-                }
+
+                    override fun onError(errorCode: String, errorMsg: String) {
+                        Log.w(TAG, "ensureBizCurrentFamily: getHomeDetail failed code=$errorCode msg=$errorMsg")
+                        onDone()
+                    }
+                })
+            } catch (t: Throwable) {
+                Log.w(TAG, "ensureBizCurrentFamily: getHomeDetail crash (continuing): ${t.message}")
+                onDone()
             }
-
-            Log.d(TAG, "✅ BizActivator setHomeId=$homeId")
-        } catch (t: Throwable) {
-            // Not fatal to app start, but if this fails: BizBundle will keep relationId=0
-            Log.e(TAG, "❌ setBizActivatorHomeId failed: ${t.message}", t)
-        }
-    }
-
-    private fun startBizActivator(activity: Activity, homeId: Long) {
-        val clazz = Class.forName("com.thingclips.smart.activator.plug.mesosphere.ThingDeviceActivatorManager")
-        val instance = clazz.getDeclaredField("INSTANCE").get(null)
-
-        // Prefer overload: startDeviceActiveAction(Activity, long)
-        val m2 = clazz.methods.firstOrNull { it.name == "startDeviceActiveAction" && it.parameterTypes.size == 2 }
-        if (m2 != null) {
-            val p1 = m2.parameterTypes[1]
-            when (p1) {
-                java.lang.Long.TYPE, java.lang.Long::class.java -> m2.invoke(instance, activity, homeId)
-                java.lang.Integer.TYPE, java.lang.Integer::class.java -> m2.invoke(instance, activity, homeId.toInt())
-                else -> {
-                    // fallback to 1-arg
-                    val m1 = clazz.methods.firstOrNull { it.name == "startDeviceActiveAction" && it.parameterTypes.size == 1 }
-                    m1?.invoke(instance, activity)
-                }
-            }
-            Log.d(TAG, "✅ startBizActivator(activity, homeId=$homeId)")
-            return
         }
 
-        // Fallback: startDeviceActiveAction(Activity)
-        val m1 = clazz.methods.firstOrNull { it.name == "startDeviceActiveAction" && it.parameterTypes.size == 1 }
-        if (m1 != null) {
-            m1.invoke(instance, activity)
-            Log.d(TAG, "✅ startBizActivator(activity)")
-            return
-        }
-
-        throw NoSuchMethodException("No startDeviceActiveAction overload found")
-    }
-
-    // ---------- Helper: robust UUID extraction ----------
-    private fun extractUuidFromQrScanBean(bean: QrScanBean?): String? {
-        if (bean == null) return null
-
-        val actionData = try { bean.actionData } catch (_: Throwable) { null }
-
-        if (actionData != null) {
-            // getUuid()
-            try {
-                val m = actionData.javaClass.methods.firstOrNull { it.name == "getUuid" && it.parameterTypes.isEmpty() }
-                val v = m?.invoke(actionData)
-                if (v is String && v.isNotBlank()) return v
-            } catch (_: Throwable) {}
-
-            // field uuid
-            try {
-                val f = actionData.javaClass.declaredFields.firstOrNull { it.name.equals("uuid", ignoreCase = true) }
-                if (f != null) {
-                    f.isAccessible = true
-                    val v = f.get(actionData)
-                    if (v is String && v.isNotBlank()) return v
-                }
-            } catch (_: Throwable) {}
-        }
-
-        // bean.getUuid()
+        // Step 1: Try shifting BizBundle's current family (best effort)
         try {
-            val m = bean.javaClass.methods.firstOrNull { it.name == "getUuid" && it.parameterTypes.isEmpty() }
-            val v = m?.invoke(bean)
-            if (v is String && v.isNotBlank()) return v
-        } catch (_: Throwable) {}
+            val kitCandidates = listOf(
+                // ThingClips
+                "com.thingclips.smart.android.family.api.FamilyManagerCoreKit",
+                "com.thingclips.smart.family.api.FamilyManagerCoreKit",
 
-        return null
+                // Tuya (older)
+                "com.tuya.smart.android.family.api.FamilyManagerCoreKit",
+                "com.tuya.smart.family.api.FamilyManagerCoreKit"
+            )
+
+            var shifted = false
+            for (kitName in kitCandidates) {
+                try {
+                    val kitClazz = Class.forName(kitName)
+                    val getUseCase = kitClazz.methods.firstOrNull { m ->
+                        m.name == "getFamilyUseCase" && m.parameterTypes.isEmpty()
+                    } ?: continue
+
+                    val useCase = getUseCase.invoke(null) ?: continue
+                    val useCaseClazz = useCase.javaClass
+
+                    // Docs show: shiftCurrentFamily(homeId, null)
+                    val shift = useCaseClazz.methods.firstOrNull { m ->
+                        m.name == "shiftCurrentFamily" &&
+                                m.parameterTypes.size == 2 &&
+                                (m.parameterTypes[0] == java.lang.Long.TYPE || m.parameterTypes[0] == java.lang.Long::class.java)
+                    } ?: continue
+
+                    shift.invoke(useCase, homeId, null)
+                    Log.d(TAG, "✅ ensureBizCurrentFamily: shifted current family via $kitName")
+                    shifted = true
+                    break
+                } catch (t: Throwable) {
+                    Log.w(TAG, "ensureBizCurrentFamily: shift failed for $kitName: ${t.javaClass.simpleName}: ${t.message}")
+                }
+            }
+
+            if (!shifted) {
+                Log.w(TAG, "ensureBizCurrentFamily: FamilyManagerCoreKit not available or shiftCurrentFamily not found (continuing)")
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "ensureBizCurrentFamily: shifting step crashed (continuing): ${t.message}")
+        }
+
+        // Step 2: Always warm caches, then continue
+        warmAndContinue()
     }
 
-    // ---------- Main handler ----------
+    // ---------- Entry point used by MainActivity ----------
     @JvmStatic
     fun handle(call: MethodCall, result: MethodChannel.Result) {
         try {
@@ -184,12 +166,12 @@ object TuyaBridge {
                         email,
                         password,
                         object : ILoginCallback {
-                            override fun onSuccess(user: User?) {
+                            override fun onSuccess(user: User) {
                                 result.success(true)
                             }
 
-                            override fun onError(code: String?, error: String?) {
-                                result.error(code ?: "LOGIN_FAILED", error ?: "login failed", null)
+                            override fun onError(code: String, error: String) {
+                                result.error(code, error, null)
                             }
                         }
                     )
@@ -210,8 +192,8 @@ object TuyaBridge {
                                 result.success(true)
                             }
 
-                            override fun onError(code: String?, error: String?) {
-                                result.error(code ?: "SEND_CODE_FAILED", error ?: "send code failed", null)
+                            override fun onError(code: String, error: String) {
+                                result.error(code, error, null)
                             }
                         }
                     )
@@ -229,12 +211,12 @@ object TuyaBridge {
                         password,
                         code,
                         object : IRegisterCallback {
-                            override fun onSuccess(user: User?) {
+                            override fun onSuccess(user: User) {
                                 result.success(true)
                             }
 
-                            override fun onError(code: String?, error: String?) {
-                                result.error(code ?: "REGISTER_FAILED", error ?: "register failed", null)
+                            override fun onError(code: String, error: String) {
+                                result.error(code, error, null)
                             }
                         }
                     )
@@ -246,8 +228,8 @@ object TuyaBridge {
                             result.success(true)
                         }
 
-                        override fun onError(code: String?, error: String?) {
-                            result.error(code ?: "LOGOUT_FAILED", error ?: "logout failed", null)
+                        override fun onError(code: String, error: String) {
+                            result.error(code, error, null)
                         }
                     })
                 }
@@ -256,23 +238,22 @@ object TuyaBridge {
                 // Home
                 // ==========================================================
                 "getHomeList" -> {
-                    ThingHomeSdk.getHomeManagerInstance()
-                        .queryHomeList(object : IThingGetHomeListCallback {
-                            override fun onSuccess(homeBeans: MutableList<HomeBean>?) {
-                                val list = (homeBeans ?: mutableListOf()).map { hb ->
-                                    hashMapOf<String, Any?>(
-                                        "homeId" to hb.homeId,
-                                        "name" to hb.name,
-                                        "geoName" to hb.geoName
-                                    )
-                                }
-                                result.success(list)
+                    ThingHomeSdk.getHomeManagerInstance().queryHomeList(object : IThingGetHomeListCallback {
+                        override fun onSuccess(homeBeans: MutableList<HomeBean>) {
+                            val list = homeBeans.map { hb ->
+                                hashMapOf<String, Any?>(
+                                    "homeId" to hb.homeId,
+                                    "name" to hb.name,
+                                    "geoName" to hb.geoName
+                                )
                             }
+                            result.success(list)
+                        }
 
-                            override fun onError(errorCode: String?, error: String?) {
-                                result.error(errorCode ?: "HOME_LIST_FAILED", error ?: "queryHomeList failed", null)
-                            }
-                        })
+                        override fun onError(errorCode: String, error: String) {
+                            result.error(errorCode, error, null)
+                        }
+                    })
                 }
 
                 "ensureHome" -> {
@@ -280,241 +261,184 @@ object TuyaBridge {
                     val geoName = call.argument<String>("geoName") ?: "Oman"
                     val rooms = call.argument<List<String>>("rooms") ?: listOf("Living Room")
 
-                    ThingHomeSdk.getHomeManagerInstance()
-                        .queryHomeList(object : IThingGetHomeListCallback {
-                            override fun onSuccess(homeBeans: MutableList<HomeBean>?) {
-                                val existing = homeBeans?.firstOrNull()
-                                if (existing != null) {
-                                    result.success(
-                                        hashMapOf<String, Any?>(
-                                            "homeId" to existing.homeId,
-                                            "name" to existing.name,
-                                            "geoName" to existing.geoName
-                                        )
+                    ThingHomeSdk.getHomeManagerInstance().queryHomeList(object : IThingGetHomeListCallback {
+                        override fun onSuccess(homeBeans: MutableList<HomeBean>) {
+                            val existing = homeBeans.firstOrNull()
+                            if (existing != null) {
+                                result.success(
+                                    hashMapOf<String, Any?>(
+                                        "homeId" to existing.homeId,
+                                        "name" to existing.name,
+                                        "geoName" to existing.geoName
                                     )
-                                    return
-                                }
-
-                                ThingHomeSdk.getHomeManagerInstance().createHome(
-                                    name,
-                                    0.0,
-                                    0.0,
-                                    geoName,
-                                    rooms,
-                                    object : IThingHomeResultCallback {
-                                        override fun onSuccess(bean: HomeBean?) {
-                                            if (bean == null) {
-                                                result.error("CREATE_HOME_FAILED", "HomeBean is null", null)
-                                                return
-                                            }
-                                            result.success(
-                                                hashMapOf<String, Any?>(
-                                                    "homeId" to bean.homeId,
-                                                    "name" to bean.name,
-                                                    "geoName" to bean.geoName
-                                                )
-                                            )
-                                        }
-
-                                        override fun onError(errorCode: String?, errorMsg: String?) {
-                                            result.error(errorCode ?: "CREATE_HOME_FAILED", errorMsg ?: "createHome failed", null)
-                                        }
-                                    }
                                 )
+                                return
                             }
 
-                            override fun onError(errorCode: String?, error: String?) {
-                                result.error(errorCode ?: "HOME_LIST_FAILED", error ?: "queryHomeList failed", null)
-                            }
-                        })
-                }
+                            ThingHomeSdk.getHomeManagerInstance().createHome(
+                                name,
+                                0.0,
+                                0.0,
+                                geoName,
+                                rooms,
+                                object : IThingHomeResultCallback {
+                                    override fun onSuccess(bean: HomeBean) {
+                                        result.success(
+                                            hashMapOf<String, Any?>(
+                                                "homeId" to bean.homeId,
+                                                "name" to bean.name,
+                                                "geoName" to bean.geoName
+                                            )
+                                        )
+                                    }
 
-                // ==========================================================
-                // ✅ BizBundle: Add Device (Tuya UI) — FIXED (homeId binding)
-                // ==========================================================
-                "bizOpenAddDevice" -> {
-                    val activity = currentActivity ?: run {
-                        result.error("NO_ACTIVITY", "No foreground Activity available", null)
-                        return
-                    }
-                    val homeId = (call.argument<Number>("homeId") ?: 0).toLong()
-                    if (homeId <= 0) {
-                        result.error("BAD_ARGS", "homeId is required", null)
-                        return
-                    }
-
-                    mainHandler.post {
-                        try {
-                            setBizActivatorHomeId(homeId)
-                            startBizActivator(activity, homeId)
-                            result.success(true)
-                        } catch (t: Throwable) {
-                            Log.e(TAG, "bizOpenAddDevice failed", t)
-                            result.error("ADD_DEVICE_UI_FAILED", t.message, null)
+                                    override fun onError(errorCode: String, errorMsg: String) {
+                                        result.error(errorCode, errorMsg, null)
+                                    }
+                                }
+                            )
                         }
-                    }
+
+                        override fun onError(errorCode: String, error: String) {
+                            result.error(errorCode, error, null)
+                        }
+                    })
                 }
 
                 // ==========================================================
-                // ✅ BizBundle: QR Scan (Tuya UI) — FIXED (homeId binding)
+                // Option A (BizBundle UI)
                 // ==========================================================
                 "bizOpenQrScan" -> {
                     val activity = currentActivity ?: run {
                         result.error("NO_ACTIVITY", "No foreground Activity available", null)
                         return
                     }
-
                     val homeId = (call.argument<Number>("homeId") ?: 0).toLong()
-                    if (homeId <= 0) {
-                        result.error("BAD_ARGS", "homeId is required", null)
-                        return
-                    }
 
                     mainHandler.post {
-                        try {
-                            // ✅ Critical: set homeId BEFORE opening scanner / guide
-                            setBizActivatorHomeId(homeId)
+                        ensureBizCurrentFamily(homeId) {
+                            try {
+                                val scanClazz = Class.forName("com.thingclips.smart.activator.scan.qrcode.ScanManager")
+                                val instance = scanClazz.getDeclaredField("INSTANCE").get(null)
 
-                            val scanClazz = Class.forName("com.thingclips.smart.activator.scan.qrcode.ScanManager")
-                            val instance = scanClazz.getDeclaredField("INSTANCE").get(null)
-
-                            // Prefer openScan(Context, Bundle)
-                            val openScanWithBundle = scanClazz.methods.firstOrNull {
-                                it.name == "openScan" && it.parameterTypes.size == 2
-                            }
-                            if (openScanWithBundle != null) {
-                                val bundle = Bundle().apply {
-                                    // Try multiple common keys (SDK variations)
-                                    putLong("homeId", homeId)
-                                    putLong("HOME_ID", homeId)
-                                    putString("homeId", homeId.toString())
+                                // Prefer openScan(Context, Bundle)
+                                val openScanWithBundle = scanClazz.methods.firstOrNull {
+                                    it.name == "openScan" && it.parameterTypes.size == 2
                                 }
-                                openScanWithBundle.invoke(instance, activity, bundle)
+
+                                if (openScanWithBundle != null) {
+                                    val bundle = android.os.Bundle().apply {
+                                        putLong("homeId", homeId)
+                                        putInt("homeId_int", homeId.toInt())
+                                    }
+                                    openScanWithBundle.invoke(instance, activity, bundle)
+                                    result.success(true)
+                                    return@ensureBizCurrentFamily
+                                }
+
+                                // Fallback openScan(Context)
+                                val openScan = scanClazz.methods.firstOrNull {
+                                    it.name == "openScan" && it.parameterTypes.size == 1
+                                } ?: throw NoSuchMethodException("ScanManager.openScan(Context/*,Bundle*/) not found")
+
+                                openScan.invoke(instance, activity)
                                 result.success(true)
-                                return@post
+                            } catch (t: Throwable) {
+                                Log.e(TAG, "bizOpenQrScan failed", t)
+                                result.error("QR_SCAN_FAILED", t.message, null)
                             }
-
-                            // Fallback openScan(Context)
-                            val openScan = scanClazz.methods.firstOrNull {
-                                it.name == "openScan" && it.parameterTypes.size == 1
-                            } ?: throw NoSuchMethodException("ScanManager.openScan not found")
-
-                            openScan.invoke(instance, activity)
-                            result.success(true)
-                        } catch (t: Throwable) {
-                            Log.e(TAG, "bizOpenQrScan failed", t)
-                            result.error("QR_SCAN_FAILED", t.message, null)
                         }
                     }
                 }
 
-                // ==========================================================
-                // ✅ Direct SDK Stable QR pairing (kept as fallback)
-                // ==========================================================
-                "pairDeviceByQr" -> {
+                "bizOpenAddDevice" -> {
                     val activity = currentActivity ?: run {
                         result.error("NO_ACTIVITY", "No foreground Activity available", null)
                         return
                     }
-
                     val homeId = (call.argument<Number>("homeId") ?: 0).toLong()
-                    val qrUrl = (call.argument<String>("qrUrl") ?: "").trim()
-                    val timeout = (call.argument<Number>("timeout") ?: 100).toInt()
-
-                    if (homeId <= 0 || qrUrl.isEmpty()) {
-                        result.error("BAD_ARGS", "homeId and qrUrl are required", null)
-                        return
-                    }
 
                     mainHandler.post {
-                        try {
-                            ThingHomeSdk.getActivatorInstance().deviceQrCodeParse(
-                                qrUrl,
-                                object : IThingDataCallback<QrScanBean> {
-                                    override fun onSuccess(data: QrScanBean?) {
-                                        try {
-                                            val uuid = extractUuidFromQrScanBean(data)
-                                            if (uuid.isNullOrBlank()) {
-                                                emit("tuya_gw_error", hashMapOf("code" to "QR_PARSE_FAILED", "msg" to "UUID not found"))
-                                                result.error("QR_PARSE_FAILED", "UUID not found in QrScanBean", null)
-                                                return
-                                            }
-
-                                            val builder = ThingQRCodeActivatorBuilder()
-                                                .setContext(activity)
-                                                .setHomeId(homeId)
-                                                .setUuid(uuid)
-                                                .setTimeOut(timeout.toLong())
-                                                .setListener(object : IThingSmartActivatorListener {
-                                                    override fun onError(errorCode: String?, errorMsg: String?) {
-                                                        emit(
-                                                            "tuya_gw_error",
-                                                            hashMapOf(
-                                                                "code" to (errorCode ?: "QR_ACTIVE_ERROR"),
-                                                                "msg" to (errorMsg ?: "activation failed")
-                                                            )
-                                                        )
-                                                    }
-
-                                                    override fun onActiveSuccess(devResp: DeviceBean?) {
-                                                        if (devResp != null) {
-                                                            emit(
-                                                                "tuya_gw_success",
-                                                                hashMapOf(
-                                                                    "devId" to devResp.devId,
-                                                                    "name" to devResp.name,
-                                                                    "isOnline" to devResp.isOnline
-                                                                )
-                                                            )
-                                                        } else {
-                                                            emit("tuya_gw_success", hashMapOf("devId" to "", "name" to "", "isOnline" to false))
-                                                        }
-                                                    }
-
-                                                    override fun onStep(step: String?, data: Any?) {
-                                                        // Optional progress
-                                                    }
-                                                })
-
-                                            val activator = ThingHomeSdk.getActivatorInstance().newQRCodeDevActivator(builder)
-                                            activator.start()
-
-                                            result.success(true)
-                                        } catch (t: Throwable) {
-                                            Log.e(TAG, "pairDeviceByQr start failed", t)
-                                            emit("tuya_gw_error", hashMapOf("code" to "QR_ACTIVE_ERROR", "msg" to (t.message ?: "unknown")))
-                                            result.error("QR_ACTIVE_ERROR", t.message, null)
-                                        }
-                                    }
-
-                                    override fun onError(errorCode: String?, errorMessage: String?) {
-                                        emit("tuya_gw_error", hashMapOf("code" to (errorCode ?: "QR_PARSE_FAILED"), "msg" to (errorMessage ?: "parse failed")))
-                                        result.error(errorCode ?: "QR_PARSE_FAILED", errorMessage ?: "parse failed", null)
-                                    }
-                                }
-                            )
-                        } catch (t: Throwable) {
-                            Log.e(TAG, "pairDeviceByQr failed", t)
-                            emit("tuya_gw_error", hashMapOf("code" to "QR_PAIR_FAILED", "msg" to (t.message ?: "unknown")))
-                            result.error("QR_PAIR_FAILED", t.message, null)
+                        ensureBizCurrentFamily(homeId) {
+                            try {
+                                BizBundleActivatorUi.openAddDevice(
+                                    activity = activity,
+                                    homeId = homeId,
+                                    onOk = { result.success(true) },
+                                    onErr = { t -> result.error("ADD_DEVICE_UI_FAILED", t.message, null) }
+                                )
+                            } catch (t: Throwable) {
+                                result.error("ADD_DEVICE_UI_FAILED", t.message, null)
+                            }
                         }
                     }
                 }
 
                 // ==========================================================
-                // Optional compatibility calls (kept)
+                // Keep Dart stable (existing methods)
                 // ==========================================================
+                "startZigbeeGatewayPairing" -> {
+                    val activity = currentActivity ?: run {
+                        result.error("NO_ACTIVITY", "No foreground Activity available", null)
+                        return
+                    }
+                    val homeId = (call.argument<Number>("homeId") ?: 0).toLong()
+
+                    mainHandler.post {
+                        ensureBizCurrentFamily(homeId) {
+                            try {
+                                BizBundleActivatorUi.openAddDevice(
+                                    activity = activity,
+                                    homeId = homeId,
+                                    onOk = { result.success(true) },
+                                    onErr = { t -> result.error("GW_PAIRING_FAILED", t.message, null) }
+                                )
+                            } catch (t: Throwable) {
+                                result.error("GW_PAIRING_FAILED", t.message, null)
+                            }
+                        }
+                    }
+                }
+
+                "openAddGateway" -> {
+                    val activity = currentActivity ?: run {
+                        result.error("NO_ACTIVITY", "No foreground Activity available", null)
+                        return
+                    }
+                    val homeId = (call.argument<Number>("homeId") ?: 0).toLong()
+
+                    mainHandler.post {
+                        ensureBizCurrentFamily(homeId) {
+                            try {
+                                BizBundleActivatorUi.openAddDevice(
+                                    activity = activity,
+                                    homeId = homeId,
+                                    onOk = { result.success(true) },
+                                    onErr = { t -> result.error("ADD_GATEWAY_FAILED", t.message, null) }
+                                )
+                            } catch (t: Throwable) {
+                                result.error("ADD_GATEWAY_FAILED", t.message, null)
+                            }
+                        }
+                    }
+                }
+
+                // Legacy / optional
                 "openQrScan" -> {
                     val activity = currentActivity ?: run {
                         result.error("NO_ACTIVITY", "No foreground Activity available", null)
                         return
                     }
+
                     mainHandler.post {
                         try {
                             val scanClazz = Class.forName("com.thingclips.smart.activator.scan.qrcode.ScanManager")
                             val instance = scanClazz.getDeclaredField("INSTANCE").get(null)
-                            val openScan = scanClazz.methods.firstOrNull { it.name == "openScan" && it.parameterTypes.size == 1 }
-                                ?: throw NoSuchMethodException("ScanManager.openScan(Context) not found")
+
+                            val openScan = scanClazz.methods.firstOrNull {
+                                it.name == "openScan" && it.parameterTypes.size == 1
+                            } ?: throw NoSuchMethodException("ScanManager.openScan(Context) not found")
+
                             openScan.invoke(instance, activity)
                             result.success(true)
                         } catch (t: Throwable) {
@@ -523,6 +447,14 @@ object TuyaBridge {
                         }
                     }
                 }
+
+                "pairDeviceByQr" ->
+                    result.error("NOT_SUPPORTED", "Use BizBundle QR scan + Add Device UI flow", null)
+
+                "startZigbeeSubDevicePairing" ->
+                    result.error("NOT_SUPPORTED", "Use BizBundle Add Device UI flow for sub-devices", null)
+
+                "stopActivator" -> result.success(true)
 
                 else -> result.notImplemented()
             }
