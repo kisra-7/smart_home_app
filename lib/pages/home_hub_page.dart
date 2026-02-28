@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../tuya/controllers/home_hub_controller.dart';
+import '../tuya/tuya_platform.dart';
+import 'auth_page.dart';
 
 class HomeHubPage extends ConsumerStatefulWidget {
   const HomeHubPage({super.key});
@@ -16,7 +18,7 @@ class _HomeHubPageState extends ConsumerState<HomeHubPage> {
     super.initState();
     Future.microtask(() async {
       await ref.read(homeHubControllerProvider.notifier).loadHomes(autoPickFirst: true);
-      // If no homes exist, ensure one (keeps old behavior)
+
       final st = ref.read(homeHubControllerProvider).value;
       if (st == null || st.homes.isEmpty) {
         await ref.read(homeHubControllerProvider.notifier).ensureHomeIfNeeded();
@@ -25,12 +27,26 @@ class _HomeHubPageState extends ConsumerState<HomeHubPage> {
     });
   }
 
+  Future<void> _logout() async {
+    await TuyaPlatform.logout();
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const AuthPage()));
+  }
+
   @override
   Widget build(BuildContext context) {
     final hub = ref.watch(homeHubControllerProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text("Home Hub")),
+      appBar: AppBar(
+        title: const Text("Home Hub"),
+        actions: [
+          IconButton(
+            onPressed: _logout,
+            icon: const Icon(Icons.logout),
+          ),
+        ],
+      ),
       body: hub.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text("Error: $e")),
@@ -89,6 +105,13 @@ class _HomeHubPageState extends ConsumerState<HomeHubPage> {
                       ),
                     ),
                   ],
+                ),
+
+                const SizedBox(height: 16),
+
+                const Text(
+                  "Tip: For gateway QR binding, scan from Tuya UI and follow the pairing flow.",
+                  textAlign: TextAlign.center,
                 ),
               ],
             ),

@@ -11,12 +11,8 @@ class MainApplication : Application() {
     override fun onCreate() {
         super.onCreate()
 
-        // BizBundles uses Fresco internally
-        try {
-            Fresco.initialize(this)
-        } catch (t: Throwable) {
-            Log.w(TAG, "⚠️ Fresco.init failed (continuing)", t)
-        }
+        try { Fresco.initialize(this) }
+        catch (t: Throwable) { Log.w(TAG, "⚠️ Fresco.init failed (continuing)", t) }
 
         try {
             ThingHomeSdk.init(this)
@@ -28,6 +24,9 @@ class MainApplication : Application() {
         }
 
         initBizBundleReflectively()
+
+        // ✅ Official requirement: register AbsBizBundleFamilyService implementation
+        registerBizBundleFamilyService()
     }
 
     private fun initBizBundleReflectively() {
@@ -42,7 +41,6 @@ class MainApplication : Application() {
             try {
                 val initializerClass = Class.forName(className)
 
-                // init(Application)
                 initializerClass.methods.firstOrNull { m ->
                     m.name == "init" &&
                         m.parameterTypes.size == 1 &&
@@ -53,7 +51,6 @@ class MainApplication : Application() {
                     return
                 }
 
-                // init(Application, RouteEventListener, ServiceEventListener)
                 val init3 = initializerClass.methods.firstOrNull { m ->
                     m.name == "init" && m.parameterTypes.size == 3 &&
                         Application::class.java.isAssignableFrom(m.parameterTypes[0])
@@ -77,7 +74,51 @@ class MainApplication : Application() {
             }
         }
 
-        Log.e(TAG, "❌ BizBundle initializer not found. Activator may crash with 'Must call onCreate(application) first'")
+        Log.e(TAG, "❌ BizBundle initializer not found.")
+    }
+
+    private fun registerBizBundleFamilyService() {
+        val wrapperCandidates = listOf(
+            "com.thingclips.smart.bizbundle.TuyaWrapper",
+            "com.thingclips.smart.android.bizbundle.TuyaWrapper",
+            "com.tuya.smart.bizbundle.TuyaWrapper",
+            "com.tuya.smart.android.bizbundle.TuyaWrapper"
+        )
+
+        val familyServiceClassCandidates = listOf(
+            "com.thingclips.smart.bizbundle.family.api.AbsBizBundleFamilyService",
+            "com.thingclips.smart.android.bizbundle.family.api.AbsBizBundleFamilyService",
+            "com.tuya.smart.bizbundle.family.api.AbsBizBundleFamilyService",
+            "com.tuya.smart.android.bizbundle.family.api.AbsBizBundleFamilyService"
+        )
+
+        try {
+            val wrapperClass = wrapperCandidates.firstNotNullOfOrNull {
+                try { Class.forName(it) } catch (_: Throwable) { null }
+            } ?: run {
+                Log.w(TAG, "⚠️ TuyaWrapper not found. (Family service registration skipped)")
+                return
+            }
+
+            val absFamilyClass = familyServiceClassCandidates.firstNotNullOfOrNull {
+                try { Class.forName(it) } catch (_: Throwable) { null }
+            } ?: run {
+                Log.w(TAG, "⚠️ AbsBizBundleFamilyService class not found. (Registration skipped)")
+                return
+            }
+
+            val register = wrapperClass.methods.firstOrNull { m ->
+                m.name == "registerService" && m.parameterTypes.size == 2
+            } ?: run {
+                Log.w(TAG, "⚠️ TuyaWrapper.registerService not found")
+                return
+            }
+
+            register.invoke(null, absFamilyClass, BizBundleFamilyServiceImpl.instance)
+            Log.d(TAG, "✅ Registered BizBundleFamilyServiceImpl with TuyaWrapper")
+        } catch (t: Throwable) {
+            Log.e(TAG, "❌ registerBizBundleFamilyService failed", t)
+        }
     }
 
     private fun createLoggingProxy(iface: Class<*>, label: String): Any {
@@ -92,7 +133,5 @@ class MainApplication : Application() {
         }
     }
 
-    companion object {
-        private const val TAG = "MainApplication"
-    }
+    companion object { private const val TAG = "MainApplication" }
 }
