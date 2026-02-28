@@ -1,19 +1,44 @@
-
-import 'package:alrawi_app/tuya/models/things_device.dart';
-
 import '../tuya_platform.dart';
 
-class TuyaHomeRepository {
-  Future<List<Map<String, dynamic>>> getHomes() => TuyaPlatform.getHomeList();
+class TuyaHome {
+  final int homeId;
+  final String name;
+  final String geoName;
 
-  Future<int> ensureHomeId() async {
-    final home = await TuyaPlatform.ensureHome();
-    return (home['homeId'] as num).toInt();
+  const TuyaHome({
+    required this.homeId,
+    required this.name,
+    required this.geoName,
+  });
+
+  factory TuyaHome.fromMap(Map<dynamic, dynamic> map) {
+    return TuyaHome(
+      homeId: (map['homeId'] as num).toInt(),
+      name: (map['name'] ?? '').toString(),
+      geoName: (map['geoName'] ?? '').toString(),
+    );
+  }
+}
+
+class TuyaHomeRepository {
+  Future<List<TuyaHome>> getHomes() async {
+    final list = await TuyaPlatform.getHomeList();
+    return list.map((e) => TuyaHome.fromMap(e)).toList();
+    // TuyaPlatform.getHomeList() must return List<Map>
   }
 
-  Future<List<ThingDevice>> getDevices(int homeId) async {
-    final res = await TuyaPlatform.getHomeDevices(homeId: homeId);
-    final list = (res['devices'] as List?) ?? const [];
-    return list.map((e) => ThingDevice.fromMap(Map<String, dynamic>.from(e as Map))).toList();
+  /// Ensures there is at least one home, and returns the ensured home.
+  /// NOTE: Native ensureHome returns a Map {homeId, name, geoName}
+  Future<TuyaHome> ensureHome({
+    required String name,
+    required String geoName,
+    required List<String> rooms,
+  }) async {
+    final map = await TuyaPlatform.ensureHome(
+      name: name,
+      geoName: geoName,
+      rooms: rooms,
+    );
+    return TuyaHome.fromMap(map);
   }
 }

@@ -1,56 +1,53 @@
-import 'package:alrawi_app/tuya/tuya_platform.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'tuya_bizbundle_repository.dart';
+import '../tuya_platform.dart';
 
-final tuyaBizbundleRepositoryProvider = Provider<TuyaBizbundleRepository>(
-  (ref) => const TuyaBizbundleRepository(),
+final tuyaBizBundleControllerProvider =
+    NotifierProvider<TuyaBizBundleController, TuyaBizBundleState>(
+  TuyaBizBundleController.new,
 );
 
-final tuyaBizbundleControllerProvider =
-    NotifierProvider<TuyaBizbundleController, AsyncValue<void>>(
-  TuyaBizbundleController.new,
-);
-
-class TuyaBizbundleController extends Notifier<AsyncValue<void>> {
-  late final TuyaBizbundleRepository _repo;
-
+class TuyaBizBundleController extends Notifier<TuyaBizBundleState> {
   @override
-  AsyncValue<void> build() {
-    _repo = ref.read(tuyaBizbundleRepositoryProvider);
-    return const AsyncData(null);
-  }
+  TuyaBizBundleState build() => const TuyaBizBundleState();
 
-  Future<int> _ensureHomeId() async {
-    final homes = await TuyaPlatform.getHomeList();
-    if (homes.isNotEmpty) {
-      final hid = (homes.first["homeId"] as num?)?.toInt() ?? 0;
-      if (hid > 0) return hid;
+  Future<void> ensureBizContext(int homeId) async {
+    state = state.copyWith(loading: true, error: null);
+    try {
+      await TuyaPlatform.ensureBizContext(homeId: homeId);
+      state = state.copyWith(loading: false);
+    } catch (e) {
+      state = state.copyWith(loading: false, error: e.toString());
+      rethrow;
     }
+  }
 
-    final ensured = await TuyaPlatform.ensureHome(
-      name: "My Home",
-      geoName: "Oman",
-      rooms: const ["Living Room"],
+  Future<void> openAddDevice(int homeId) async {
+    await ensureBizContext(homeId);
+    await TuyaPlatform.bizOpenAddDevice(homeId: homeId);
+  }
+
+  Future<void> openQrScan(int homeId) async {
+    await ensureBizContext(homeId);
+    await TuyaPlatform.bizOpenQrScan(homeId: homeId);
+  }
+}
+
+class TuyaBizBundleState {
+  final bool loading;
+  final String? error;
+
+  const TuyaBizBundleState({
+    this.loading = false,
+    this.error,
+  });
+
+  TuyaBizBundleState copyWith({
+    bool? loading,
+    String? error,
+  }) {
+    return TuyaBizBundleState(
+      loading: loading ?? this.loading,
+      error: error,
     );
-
-    final hid = (ensured["homeId"] as num?)?.toInt() ?? 0;
-    if (hid <= 0) throw Exception("Failed to ensure homeId");
-    return hid;
-  }
-
-  Future<void> openAddDevice({int? homeId}) async {
-    state = const AsyncLoading();
-    state = await AsyncValue.guard(() async {
-      final hid = homeId ?? await _ensureHomeId();
-      await _repo.openAddDevice(homeId: hid);
-    });
-  }
-
-  Future<void> openQrScan({int? homeId}) async {
-    state = const AsyncLoading();
-    state = await AsyncValue.guard(() async {
-      final hid = homeId ?? await _ensureHomeId();
-      await _repo.openQrScan(homeId: hid);
-    });
   }
 }

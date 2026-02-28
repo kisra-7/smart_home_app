@@ -7,8 +7,6 @@ import 'tuya/tuya_platform.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Keep this init here (works fine in production).
-  // If later you want stricter startup handling, we can move it into a bootstrap provider.
   try {
     await TuyaPlatform.initSdk();
     debugPrint("✅ Tuya initSdk OK (from Dart)");

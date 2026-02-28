@@ -33,6 +33,14 @@ object BizBundleActivatorUi {
 
                 val instance = tryGetKotlinObjectInstance(mgrClazz)
 
+                // Always try setHomeId(homeId) first (if available)
+                mgrClazz.methods.firstOrNull { m ->
+                    m.name == "setHomeId" &&
+                        m.parameterTypes.size == 1 &&
+                        (m.parameterTypes[0] == java.lang.Long.TYPE || m.parameterTypes[0] == java.lang.Long::class.java)
+                }?.invoke(instance, homeId)
+
+                // Prefer overload: startDeviceActiveAction(Activity, long)
                 val overload2 = mgrClazz.methods.firstOrNull { m ->
                     m.name == "startDeviceActiveAction" &&
                         m.parameterTypes.size == 2 &&
@@ -46,17 +54,12 @@ object BizBundleActivatorUi {
                     return@post
                 }
 
-                mgrClazz.methods.firstOrNull { m ->
-                    m.name == "setHomeId" &&
-                        m.parameterTypes.size == 1 &&
-                        (m.parameterTypes[0] == java.lang.Long.TYPE || m.parameterTypes[0] == java.lang.Long::class.java)
-                }?.invoke(instance, homeId)
-
+                // Fallback: startDeviceActiveAction(Activity)
                 val overload1 = mgrClazz.methods.firstOrNull { m ->
                     m.name == "startDeviceActiveAction" &&
                         m.parameterTypes.size == 1 &&
                         Activity::class.java.isAssignableFrom(m.parameterTypes[0])
-                } ?: throw NoSuchMethodException("startDeviceActiveAction(Activity) not found on ${mgrClazz.name}")
+                } ?: throw NoSuchMethodException("startDeviceActiveAction(Activity/Activity,long) not found on ${mgrClazz.name}")
 
                 overload1.invoke(instance, activity)
                 onOk()
@@ -69,18 +72,12 @@ object BizBundleActivatorUi {
 
     private fun resolveFirstExistingClass(candidates: List<String>): Class<*>? {
         for (name in candidates) {
-            try {
-                return Class.forName(name)
-            } catch (_: Throwable) {}
+            try { return Class.forName(name) } catch (_: Throwable) {}
         }
         return null
     }
 
     private fun tryGetKotlinObjectInstance(clazz: Class<*>): Any? {
-        return try {
-            clazz.getDeclaredField("INSTANCE").get(null)
-        } catch (_: Throwable) {
-            null
-        }
+        return try { clazz.getDeclaredField("INSTANCE").get(null) } catch (_: Throwable) { null }
     }
 }

@@ -7,7 +7,7 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
 
-    // ✅ MUST match Dart exactly: MethodChannel("tuya_bridge")
+    // ✅ MUST MATCH Dart side exactly
     private val channelName = "tuya_bridge"
 
     override fun onCreate(savedInstanceState: Bundle?) {

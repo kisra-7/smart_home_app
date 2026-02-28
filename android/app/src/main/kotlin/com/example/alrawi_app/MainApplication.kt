@@ -11,6 +11,7 @@ class MainApplication : Application() {
     override fun onCreate() {
         super.onCreate()
 
+        // BizBundles uses Fresco internally
         try {
             Fresco.initialize(this)
         } catch (t: Throwable) {
@@ -27,23 +28,6 @@ class MainApplication : Application() {
         }
 
         initBizBundleReflectively()
-
-        // ✅ After BizBundle init: if logged in + have saved homeId, bootstrap.
-        try {
-            if (ThingHomeSdk.getUserInstance().isLogin) {
-                val savedHomeId = TuyaBridge.getSavedHomeId(this)
-                if (savedHomeId > 0L) {
-                    TuyaBridge.bootstrapBizContext(
-                        ctx = this,
-                        homeId = savedHomeId,
-                        onOk = { Log.d(TAG, "✅ bootstrapBizContext at app start OK homeId=$savedHomeId") },
-                        onErr = { t -> Log.w(TAG, "bootstrapBizContext at app start failed: ${t.message}") }
-                    )
-                }
-            }
-        } catch (t: Throwable) {
-            Log.w(TAG, "bootstrapBizContext at app start crashed: ${t.message}")
-        }
     }
 
     private fun initBizBundleReflectively() {
@@ -58,6 +42,7 @@ class MainApplication : Application() {
             try {
                 val initializerClass = Class.forName(className)
 
+                // init(Application)
                 initializerClass.methods.firstOrNull { m ->
                     m.name == "init" &&
                         m.parameterTypes.size == 1 &&
@@ -68,6 +53,7 @@ class MainApplication : Application() {
                     return
                 }
 
+                // init(Application, RouteEventListener, ServiceEventListener)
                 val init3 = initializerClass.methods.firstOrNull { m ->
                     m.name == "init" && m.parameterTypes.size == 3 &&
                         Application::class.java.isAssignableFrom(m.parameterTypes[0])
@@ -91,7 +77,7 @@ class MainApplication : Application() {
             }
         }
 
-        Log.e(TAG, "❌ BizBundle initializer not found. Activator will crash with 'Must call onCreate(application) first'")
+        Log.e(TAG, "❌ BizBundle initializer not found. Activator may crash with 'Must call onCreate(application) first'")
     }
 
     private fun createLoggingProxy(iface: Class<*>, label: String): Any {
