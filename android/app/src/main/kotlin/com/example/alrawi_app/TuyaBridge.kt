@@ -1,12 +1,16 @@
 package com.example.alrawi_app
 
 import android.app.Activity
+import android.content.Context
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.lang.ref.WeakReference
+import java.lang.reflect.Proxy
+import java.util.concurrent.atomic.AtomicBoolean
 
 import com.thingclips.smart.home.sdk.ThingHomeSdk
 import com.thingclips.smart.android.user.api.ILoginCallback
@@ -21,6 +25,9 @@ import com.thingclips.smart.home.sdk.bean.HomeBean
 object TuyaBridge {
 
     private const val TAG = "TuyaBridge"
+    private const val PREFS = "alrawi_tuya_prefs"
+    private const val KEY_HOME_ID = "current_home_id"
+
     private val mainHandler = Handler(Looper.getMainLooper())
 
     // ---------- Activity holder ----------
@@ -37,10 +44,9 @@ object TuyaBridge {
         if (cur === activity) activityRef = null
     }
 
-    private val currentActivity: Activity?
-        get() = activityRef?.get()
+    private fun getActivity(): Activity? = activityRef?.get()
 
-    // ---------- Channel holder (optional events) ----------
+    // ---------- Channel holder ----------
     private var channel: MethodChannel? = null
 
     @JvmStatic
@@ -48,107 +54,160 @@ object TuyaBridge {
         channel = ch
     }
 
-    @Suppress("unused")
-    private fun emit(event: String, args: Any? = null) {
-        try {
-            channel?.invokeMethod(event, args)
-        } catch (t: Throwable) {
-            Log.w(TAG, "emit($event) failed: ${t.message}")
-        }
+    // ---------- Preferences ----------
+    private fun saveHomeId(ctx: Context, homeId: Long) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putLong(KEY_HOME_ID, homeId)
+            .apply()
+    }
+
+    fun getSavedHomeId(ctx: Context): Long {
+        return ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getLong(KEY_HOME_ID, 0L)
     }
 
     // ==========================================================
-    // BizBundle "current family/home" context
-    //
-    // Why:
-    // Native BizBundle QR / AddDevice UI expects a "current family" to be selected.
-    // If not shifted, BizBundle token fetching can fail with USER_GROUP_ID_IS_BLANK,
-    // leading to gateway QR bind failures (errCode=10002, relationId=0).
+    // ✅ THE FIX: Force BizBundle "current family/home" context
+    // so token + relationId are NOT zero in QR activation.
     // ==========================================================
-    private fun ensureBizCurrentFamily(homeId: Long, onDone: () -> Unit) {
+    fun bootstrapBizContext(
+        ctx: Context,
+        homeId: Long,
+        onOk: () -> Unit,
+        onErr: (Throwable) -> Unit
+    ) {
         if (homeId <= 0L) {
-            onDone()
+            onErr(IllegalArgumentException("homeId must be > 0"))
             return
         }
 
-        fun warmAndContinue() {
-            try {
-                // Warm SDK caches (and also makes sure home context exists)
-                ThingHomeSdk.newHomeInstance(homeId).getHomeDetail(object : IThingHomeResultCallback {
-                    override fun onSuccess(bean: HomeBean) {
-                        onDone()
-                    }
+        saveHomeId(ctx, homeId)
 
-                    override fun onError(errorCode: String, errorMsg: String) {
-                        Log.w(TAG, "ensureBizCurrentFamily: getHomeDetail failed code=$errorCode msg=$errorMsg")
-                        onDone()
-                    }
-                })
-            } catch (t: Throwable) {
-                Log.w(TAG, "ensureBizCurrentFamily: getHomeDetail crash (continuing): ${t.message}")
-                onDone()
-            }
+        // If not logged in yet, still save homeId and return OK.
+        // We’ll retry again after login / when opening Biz UI.
+        if (!ThingHomeSdk.getUserInstance().isLogin) {
+            Log.w(TAG, "bootstrapBizContext: not logged in yet. Saved homeId=$homeId (will retry later).")
+            onOk()
+            return
         }
 
-        // Step 1: Try shifting BizBundle's current family (best effort)
+        // 1) Shift current family/home (gid) using FamilyManagerCoreKit
+        shiftCurrentFamilyReflectively(
+            homeId = homeId,
+            onShifted = {
+                // 2) Warm home detail cache
+                warmHomeDetail(homeId = homeId) {
+                    Log.d(TAG, "✅ bootstrapBizContext done homeId=$homeId")
+                    onOk()
+                }
+            },
+            onErr = { t ->
+                Log.e(TAG, "bootstrapBizContext shift failed: ${t.message}", t)
+                // Still warm & continue; sometimes shift is async internally
+                warmHomeDetail(homeId = homeId) {
+                    onOk()
+                }
+            }
+        )
+    }
+
+    private fun warmHomeDetail(homeId: Long, done: () -> Unit) {
         try {
-            val kitCandidates = listOf(
-                // ThingClips
-                "com.thingclips.smart.android.family.api.FamilyManagerCoreKit",
-                "com.thingclips.smart.family.api.FamilyManagerCoreKit",
+            ThingHomeSdk.newHomeInstance(homeId).getHomeDetail(object : IThingHomeResultCallback {
+                override fun onSuccess(bean: HomeBean?) {
+                    Log.d(TAG, "warmHomeDetail OK homeId=$homeId name=${bean?.name}")
+                    done()
+                }
 
-                // Tuya (older)
-                "com.tuya.smart.android.family.api.FamilyManagerCoreKit",
-                "com.tuya.smart.family.api.FamilyManagerCoreKit"
-            )
+                override fun onError(errorCode: String?, errorMsg: String?) {
+                    Log.w(TAG, "warmHomeDetail failed: $errorCode $errorMsg (continuing)")
+                    done()
+                }
+            })
+        } catch (t: Throwable) {
+            Log.w(TAG, "warmHomeDetail exception (continuing): ${t.message}")
+            done()
+        }
+    }
 
-            var shifted = false
-            for (kitName in kitCandidates) {
-                try {
-                    val kitClazz = Class.forName(kitName)
-                    val getUseCase = kitClazz.methods.firstOrNull { m ->
-                        m.name == "getFamilyUseCase" && m.parameterTypes.isEmpty()
-                    } ?: continue
+    private fun shiftCurrentFamilyReflectively(
+        homeId: Long,
+        onShifted: () -> Unit,
+        onErr: (Throwable) -> Unit
+    ) {
+        val coreKitCandidates = listOf(
+            "com.thingclips.smart.family.core.FamilyManagerCoreKit",
+            "com.tuya.smart.family.core.FamilyManagerCoreKit",
+            "com.thingclips.smart.family.FamilyManagerCoreKit",
+            "com.tuya.smart.family.FamilyManagerCoreKit"
+        )
 
-                    val useCase = getUseCase.invoke(null) ?: continue
-                    val useCaseClazz = useCase.javaClass
+        val coreKitClass = coreKitCandidates.firstNotNullOfOrNull { name ->
+            try { Class.forName(name) } catch (_: Throwable) { null }
+        } ?: run {
+            onErr(ClassNotFoundException("FamilyManagerCoreKit not found. Tried: $coreKitCandidates"))
+            return
+        }
 
-                    // Docs show: shiftCurrentFamily(homeId, null)
-                    val shift = useCaseClazz.methods.firstOrNull { m ->
-                        m.name == "shiftCurrentFamily" &&
-                                m.parameterTypes.size == 2 &&
-                                (m.parameterTypes[0] == java.lang.Long.TYPE || m.parameterTypes[0] == java.lang.Long::class.java)
-                    } ?: continue
+        try {
+            val getUseCase = coreKitClass.methods.firstOrNull { it.name == "getFamilyUseCase" && it.parameterTypes.isEmpty() }
+                ?: throw NoSuchMethodException("${coreKitClass.name}.getFamilyUseCase() not found")
 
-                    shift.invoke(useCase, homeId, null)
-                    Log.d(TAG, "✅ ensureBizCurrentFamily: shifted current family via $kitName")
-                    shifted = true
-                    break
-                } catch (t: Throwable) {
-                    Log.w(TAG, "ensureBizCurrentFamily: shift failed for $kitName: ${t.javaClass.simpleName}: ${t.message}")
+            val useCase = getUseCase.invoke(null)
+                ?: throw IllegalStateException("getFamilyUseCase() returned null")
+
+            // ✅ More robust: accept shift/switch/set methods that take (Long, callback?) or (Long)
+            val method = useCase.javaClass.methods.firstOrNull { m ->
+                val n = m.name.lowercase()
+                val okName = (n.contains("shift") || n.contains("switch") || (n.contains("set") && n.contains("current")))
+                val okFirstParam = m.parameterTypes.isNotEmpty() &&
+                    (m.parameterTypes[0] == java.lang.Long.TYPE || m.parameterTypes[0] == java.lang.Long::class.java)
+                okName && okFirstParam
+            } ?: throw NoSuchMethodException("No shift/switch/setCurrentFamily(Long, ...) method found on ${useCase.javaClass.name}")
+
+            val fired = AtomicBoolean(false)
+            fun fireOnce() {
+                if (fired.compareAndSet(false, true)) {
+                    mainHandler.post {
+                        Log.d(TAG, "✅ shiftCurrentFamily done (method=${method.name}) homeId=$homeId")
+                        onShifted()
+                    }
                 }
             }
 
-            if (!shifted) {
-                Log.w(TAG, "ensureBizCurrentFamily: FamilyManagerCoreKit not available or shiftCurrentFamily not found (continuing)")
+            if (method.parameterTypes.size >= 2) {
+                val cbType = method.parameterTypes[1]
+                val cbProxy = Proxy.newProxyInstance(cbType.classLoader, arrayOf(cbType)) { _, cbMethod, args ->
+                    val n = cbMethod.name.lowercase()
+                    if (n.contains("success") || n.contains("complete") || n.contains("finish") || n.contains("shift") || n.contains("switch")) {
+                        Log.d(TAG, "shift callback: ${cbMethod.name} args=${args?.toList()}")
+                        fireOnce()
+                    } else if (n.contains("error") || n.contains("fail")) {
+                        Log.e(TAG, "shift callback error: ${cbMethod.name} args=${args?.toList()}")
+                        fireOnce()
+                    }
+                    null
+                }
+
+                method.invoke(useCase, homeId, cbProxy)
+                // Safety timeout
+                mainHandler.postDelayed({ fireOnce() }, 1000)
+            } else {
+                method.invoke(useCase, homeId)
+                mainHandler.postDelayed({ fireOnce() }, 600)
             }
         } catch (t: Throwable) {
-            Log.w(TAG, "ensureBizCurrentFamily: shifting step crashed (continuing): ${t.message}")
+            onErr(t)
         }
-
-        // Step 2: Always warm caches, then continue
-        warmAndContinue()
     }
 
-    // ---------- Entry point used by MainActivity ----------
+    // ---------- Entry point ----------
     @JvmStatic
     fun handle(call: MethodCall, result: MethodChannel.Result) {
         try {
             when (call.method) {
 
-                // ==========================================================
-                // Core
-                // ==========================================================
                 "initSdk" -> result.success(true)
 
                 "isLoggedIn" -> result.success(ThingHomeSdk.getUserInstance().isLogin)
@@ -162,16 +221,28 @@ object TuyaBridge {
                     val password = call.argument<String>("password") ?: ""
 
                     ThingHomeSdk.getUserInstance().loginWithEmail(
-                        countryCode,
-                        email,
-                        password,
+                        countryCode, email, password,
                         object : ILoginCallback {
-                            override fun onSuccess(user: User) {
+                            override fun onSuccess(user: User?) {
+                                // ✅ After login, retry bootstrap with saved homeId
+                                val ctx = getActivity()?.applicationContext
+                                if (ctx != null) {
+                                    val saved = getSavedHomeId(ctx)
+                                    if (saved > 0L) {
+                                        bootstrapBizContext(
+                                            ctx = ctx,
+                                            homeId = saved,
+                                            onOk = { result.success(true) },
+                                            onErr = { _ -> result.success(true) }
+                                        )
+                                        return
+                                    }
+                                }
                                 result.success(true)
                             }
 
-                            override fun onError(code: String, error: String) {
-                                result.error(code, error, null)
+                            override fun onError(code: String?, error: String?) {
+                                result.error(code ?: "LOGIN_FAILED", error ?: "login failed", null)
                             }
                         }
                     )
@@ -183,17 +254,11 @@ object TuyaBridge {
                     val type = call.argument<Int>("type") ?: 1
 
                     ThingHomeSdk.getUserInstance().sendVerifyCodeWithUserName(
-                        email,
-                        "",
-                        countryCode,
-                        type,
+                        email, "", countryCode, type,
                         object : IResultCallback {
-                            override fun onSuccess() {
-                                result.success(true)
-                            }
-
-                            override fun onError(code: String, error: String) {
-                                result.error(code, error, null)
+                            override fun onSuccess() = result.success(true)
+                            override fun onError(code: String?, error: String?) {
+                                result.error(code ?: "SEND_CODE_FAILED", error ?: "send code failed", null)
                             }
                         }
                     )
@@ -206,17 +271,11 @@ object TuyaBridge {
                     val code = call.argument<String>("code") ?: ""
 
                     ThingHomeSdk.getUserInstance().registerAccountWithEmail(
-                        countryCode,
-                        email,
-                        password,
-                        code,
+                        countryCode, email, password, code,
                         object : IRegisterCallback {
-                            override fun onSuccess(user: User) {
-                                result.success(true)
-                            }
-
-                            override fun onError(code: String, error: String) {
-                                result.error(code, error, null)
+                            override fun onSuccess(user: User?) = result.success(true)
+                            override fun onError(code: String?, error: String?) {
+                                result.error(code ?: "REGISTER_FAILED", error ?: "register failed", null)
                             }
                         }
                     )
@@ -224,12 +283,9 @@ object TuyaBridge {
 
                 "logout" -> {
                     ThingHomeSdk.getUserInstance().logout(object : ILogoutCallback {
-                        override fun onSuccess() {
-                            result.success(true)
-                        }
-
-                        override fun onError(code: String, error: String) {
-                            result.error(code, error, null)
+                        override fun onSuccess() = result.success(true)
+                        override fun onError(code: String?, error: String?) {
+                            result.error(code ?: "LOGOUT_FAILED", error ?: "logout failed", null)
                         }
                     })
                 }
@@ -239,8 +295,8 @@ object TuyaBridge {
                 // ==========================================================
                 "getHomeList" -> {
                     ThingHomeSdk.getHomeManagerInstance().queryHomeList(object : IThingGetHomeListCallback {
-                        override fun onSuccess(homeBeans: MutableList<HomeBean>) {
-                            val list = homeBeans.map { hb ->
+                        override fun onSuccess(homeBeans: MutableList<HomeBean>?) {
+                            val list = (homeBeans ?: mutableListOf()).map { hb ->
                                 hashMapOf<String, Any?>(
                                     "homeId" to hb.homeId,
                                     "name" to hb.name,
@@ -250,8 +306,8 @@ object TuyaBridge {
                             result.success(list)
                         }
 
-                        override fun onError(errorCode: String, error: String) {
-                            result.error(errorCode, error, null)
+                        override fun onError(errorCode: String?, error: String?) {
+                            result.error(errorCode ?: "HOME_LIST_FAILED", error ?: "queryHomeList failed", null)
                         }
                     })
                 }
@@ -262,9 +318,13 @@ object TuyaBridge {
                     val rooms = call.argument<List<String>>("rooms") ?: listOf("Living Room")
 
                     ThingHomeSdk.getHomeManagerInstance().queryHomeList(object : IThingGetHomeListCallback {
-                        override fun onSuccess(homeBeans: MutableList<HomeBean>) {
-                            val existing = homeBeans.firstOrNull()
+                        override fun onSuccess(homeBeans: MutableList<HomeBean>?) {
+                            val existing = homeBeans?.firstOrNull()
                             if (existing != null) {
+                                val ctx = getActivity()?.applicationContext
+                                if (ctx != null) {
+                                    bootstrapBizContext(ctx, existing.homeId, onOk = {}, onErr = {})
+                                }
                                 result.success(
                                     hashMapOf<String, Any?>(
                                         "homeId" to existing.homeId,
@@ -276,13 +336,17 @@ object TuyaBridge {
                             }
 
                             ThingHomeSdk.getHomeManagerInstance().createHome(
-                                name,
-                                0.0,
-                                0.0,
-                                geoName,
-                                rooms,
+                                name, 0.0, 0.0, geoName, rooms,
                                 object : IThingHomeResultCallback {
-                                    override fun onSuccess(bean: HomeBean) {
+                                    override fun onSuccess(bean: HomeBean?) {
+                                        if (bean == null) {
+                                            result.error("CREATE_HOME_FAILED", "HomeBean is null", null)
+                                            return
+                                        }
+                                        val ctx = getActivity()?.applicationContext
+                                        if (ctx != null) {
+                                            bootstrapBizContext(ctx, bean.homeId, onOk = {}, onErr = {})
+                                        }
                                         result.success(
                                             hashMapOf<String, Any?>(
                                                 "homeId" to bean.homeId,
@@ -292,169 +356,108 @@ object TuyaBridge {
                                         )
                                     }
 
-                                    override fun onError(errorCode: String, errorMsg: String) {
-                                        result.error(errorCode, errorMsg, null)
+                                    override fun onError(errorCode: String?, errorMsg: String?) {
+                                        result.error(errorCode ?: "CREATE_HOME_FAILED", errorMsg ?: "createHome failed", null)
                                     }
                                 }
                             )
                         }
 
-                        override fun onError(errorCode: String, error: String) {
-                            result.error(errorCode, error, null)
+                        override fun onError(errorCode: String?, error: String?) {
+                            result.error(errorCode ?: "HOME_LIST_FAILED", error ?: "queryHomeList failed", null)
                         }
                     })
                 }
 
-                // ==========================================================
-                // Option A (BizBundle UI)
-                // ==========================================================
-                "bizOpenQrScan" -> {
-                    val activity = currentActivity ?: run {
+                // ✅ Call this from Dart right after you pick a home (important!)
+                "setCurrentHome" -> {
+                    val activity = getActivity()
+                    if (activity == null) {
                         result.error("NO_ACTIVITY", "No foreground Activity available", null)
                         return
                     }
                     val homeId = (call.argument<Number>("homeId") ?: 0).toLong()
-
-                    mainHandler.post {
-                        ensureBizCurrentFamily(homeId) {
-                            try {
-                                val scanClazz = Class.forName("com.thingclips.smart.activator.scan.qrcode.ScanManager")
-                                val instance = scanClazz.getDeclaredField("INSTANCE").get(null)
-
-                                // Prefer openScan(Context, Bundle)
-                                val openScanWithBundle = scanClazz.methods.firstOrNull {
-                                    it.name == "openScan" && it.parameterTypes.size == 2
-                                }
-
-                                if (openScanWithBundle != null) {
-                                    val bundle = android.os.Bundle().apply {
-                                        putLong("homeId", homeId)
-                                        putInt("homeId_int", homeId.toInt())
-                                    }
-                                    openScanWithBundle.invoke(instance, activity, bundle)
-                                    result.success(true)
-                                    return@ensureBizCurrentFamily
-                                }
-
-                                // Fallback openScan(Context)
-                                val openScan = scanClazz.methods.firstOrNull {
-                                    it.name == "openScan" && it.parameterTypes.size == 1
-                                } ?: throw NoSuchMethodException("ScanManager.openScan(Context/*,Bundle*/) not found")
-
-                                openScan.invoke(instance, activity)
-                                result.success(true)
-                            } catch (t: Throwable) {
-                                Log.e(TAG, "bizOpenQrScan failed", t)
-                                result.error("QR_SCAN_FAILED", t.message, null)
-                            }
-                        }
-                    }
+                    bootstrapBizContext(
+                        ctx = activity.applicationContext,
+                        homeId = homeId,
+                        onOk = { result.success(true) },
+                        onErr = { t -> result.error("BIZ_CONTEXT_FAILED", t.message, null) }
+                    )
                 }
 
+                // ==========================================================
+                // BizBundle UI
+                // ==========================================================
                 "bizOpenAddDevice" -> {
-                    val activity = currentActivity ?: run {
+                    val activity = getActivity()
+                    if (activity == null) {
                         result.error("NO_ACTIVITY", "No foreground Activity available", null)
                         return
                     }
                     val homeId = (call.argument<Number>("homeId") ?: 0).toLong()
 
-                    mainHandler.post {
-                        ensureBizCurrentFamily(homeId) {
-                            try {
-                                BizBundleActivatorUi.openAddDevice(
-                                    activity = activity,
-                                    homeId = homeId,
-                                    onOk = { result.success(true) },
-                                    onErr = { t -> result.error("ADD_DEVICE_UI_FAILED", t.message, null) }
-                                )
-                            } catch (t: Throwable) {
-                                result.error("ADD_DEVICE_UI_FAILED", t.message, null)
-                            }
-                        }
-                    }
+                    // ✅ ALWAYS bootstrap before opening Biz UI
+                    bootstrapBizContext(
+                        ctx = activity.applicationContext,
+                        homeId = homeId,
+                        onOk = {
+                            BizBundleActivatorUi.openAddDevice(
+                                activity = activity,
+                                homeId = homeId,
+                                onOk = { result.success(true) },
+                                onErr = { t -> result.error("ADD_DEVICE_UI_FAILED", t.message, null) }
+                            )
+                        },
+                        onErr = { t -> result.error("BIZ_CONTEXT_FAILED", t.message, null) }
+                    )
                 }
 
-                // ==========================================================
-                // Keep Dart stable (existing methods)
-                // ==========================================================
-                "startZigbeeGatewayPairing" -> {
-                    val activity = currentActivity ?: run {
+                "bizOpenQrScan" -> {
+                    val activity = getActivity()
+                    if (activity == null) {
                         result.error("NO_ACTIVITY", "No foreground Activity available", null)
                         return
                     }
                     val homeId = (call.argument<Number>("homeId") ?: 0).toLong()
 
-                    mainHandler.post {
-                        ensureBizCurrentFamily(homeId) {
-                            try {
-                                BizBundleActivatorUi.openAddDevice(
-                                    activity = activity,
-                                    homeId = homeId,
-                                    onOk = { result.success(true) },
-                                    onErr = { t -> result.error("GW_PAIRING_FAILED", t.message, null) }
-                                )
-                            } catch (t: Throwable) {
-                                result.error("GW_PAIRING_FAILED", t.message, null)
+                    // ✅ ALWAYS bootstrap before opening native QR
+                    bootstrapBizContext(
+                        ctx = activity.applicationContext,
+                        homeId = homeId,
+                        onOk = {
+                            mainHandler.post {
+                                try {
+                                    val scanClazz = Class.forName("com.thingclips.smart.activator.scan.qrcode.ScanManager")
+                                    val instance = scanClazz.getDeclaredField("INSTANCE").get(null)
+
+                                    val openScanWithBundle = scanClazz.methods.firstOrNull {
+                                        it.name == "openScan" && it.parameterTypes.size == 2
+                                    }
+
+                                    if (openScanWithBundle != null) {
+                                        val b = Bundle().apply {
+                                            putLong("homeId", homeId)
+                                            putLong("familyId", homeId)
+                                        }
+                                        openScanWithBundle.invoke(instance, activity, b)
+                                    } else {
+                                        val openScan = scanClazz.methods.firstOrNull {
+                                            it.name == "openScan" && it.parameterTypes.size == 1
+                                        } ?: throw NoSuchMethodException("ScanManager.openScan(Context/*,Bundle*/) not found")
+
+                                        openScan.invoke(instance, activity)
+                                    }
+
+                                    result.success(true)
+                                } catch (t: Throwable) {
+                                    Log.e(TAG, "bizOpenQrScan failed", t)
+                                    result.error("QR_SCAN_FAILED", t.message, null)
+                                }
                             }
-                        }
-                    }
+                        },
+                        onErr = { t -> result.error("BIZ_CONTEXT_FAILED", t.message, null) }
+                    )
                 }
-
-                "openAddGateway" -> {
-                    val activity = currentActivity ?: run {
-                        result.error("NO_ACTIVITY", "No foreground Activity available", null)
-                        return
-                    }
-                    val homeId = (call.argument<Number>("homeId") ?: 0).toLong()
-
-                    mainHandler.post {
-                        ensureBizCurrentFamily(homeId) {
-                            try {
-                                BizBundleActivatorUi.openAddDevice(
-                                    activity = activity,
-                                    homeId = homeId,
-                                    onOk = { result.success(true) },
-                                    onErr = { t -> result.error("ADD_GATEWAY_FAILED", t.message, null) }
-                                )
-                            } catch (t: Throwable) {
-                                result.error("ADD_GATEWAY_FAILED", t.message, null)
-                            }
-                        }
-                    }
-                }
-
-                // Legacy / optional
-                "openQrScan" -> {
-                    val activity = currentActivity ?: run {
-                        result.error("NO_ACTIVITY", "No foreground Activity available", null)
-                        return
-                    }
-
-                    mainHandler.post {
-                        try {
-                            val scanClazz = Class.forName("com.thingclips.smart.activator.scan.qrcode.ScanManager")
-                            val instance = scanClazz.getDeclaredField("INSTANCE").get(null)
-
-                            val openScan = scanClazz.methods.firstOrNull {
-                                it.name == "openScan" && it.parameterTypes.size == 1
-                            } ?: throw NoSuchMethodException("ScanManager.openScan(Context) not found")
-
-                            openScan.invoke(instance, activity)
-                            result.success(true)
-                        } catch (t: Throwable) {
-                            Log.e(TAG, "openQrScan failed", t)
-                            result.error("QR_SCAN_FAILED", t.message, null)
-                        }
-                    }
-                }
-
-                "pairDeviceByQr" ->
-                    result.error("NOT_SUPPORTED", "Use BizBundle QR scan + Add Device UI flow", null)
-
-                "startZigbeeSubDevicePairing" ->
-                    result.error("NOT_SUPPORTED", "Use BizBundle Add Device UI flow for sub-devices", null)
-
-                "stopActivator" -> result.success(true)
 
                 else -> result.notImplemented()
             }

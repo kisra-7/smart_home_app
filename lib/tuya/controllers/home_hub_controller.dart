@@ -1,133 +1,157 @@
-import 'package:alrawi_app/tuya/bizbundle/tuya_bizbundle_repository.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../tuya_platform.dart';
 
 final homeHubControllerProvider =
-    AsyncNotifierProvider<HomeHubController, HomeHubState>(
-  HomeHubController.new,
-);
+    NotifierProvider<HomeHubController, HomeHubState>(HomeHubController.new);
 
-class HomeHubController extends AsyncNotifier<HomeHubState> {
-  late final TuyaBizbundleRepository _bizRepo;
+class HomeHubState {
+  final bool busy;
+  final int currentHomeId;
+  final List<HomeSummary> homes;
+  final String? error;
+
+  const HomeHubState({
+    this.busy = false,
+    this.currentHomeId = 0,
+    this.homes = const [],
+    this.error,
+  });
+
+  HomeHubState copyWith({
+    bool? busy,
+    int? currentHomeId,
+    List<HomeSummary>? homes,
+    String? error,
+  }) {
+    return HomeHubState(
+      busy: busy ?? this.busy,
+      currentHomeId: currentHomeId ?? this.currentHomeId,
+      homes: homes ?? this.homes,
+      error: error,
+    );
+  }
+}
+
+class HomeSummary {
+  final int homeId;
+  final String name;
+  final String geoName;
+
+  const HomeSummary({
+    required this.homeId,
+    required this.name,
+    required this.geoName,
+  });
+
+  factory HomeSummary.fromMap(Map map) {
+    return HomeSummary(
+      homeId: (map['homeId'] as num?)?.toInt() ?? 0,
+      name: (map['name'] ?? '').toString(),
+      geoName: (map['geoName'] ?? '').toString(),
+    );
+  }
+}
+
+class HomeHubController extends Notifier<HomeHubState> {
+  static const _native = MethodChannel('tuya_bridge');
 
   @override
-  Future<HomeHubState> build() async {
-    _bizRepo = const TuyaBizbundleRepository();
-    // Load homes on first build.
-    return _loadHomes(autoPickFirst: true);
-  }
+  HomeHubState build() => const HomeHubState();
 
-  Future<HomeHubState> _loadHomes({required bool autoPickFirst}) async {
-    final homes = await TuyaPlatform.getHomeList();
+  Future<void> loadHomes({bool autoPickFirst = false}) async {
+    state = state.copyWith(busy: true, error: null);
+    try {
+      final list = await TuyaPlatform.getHomeList();
 
-    int? selectedId;
-    String selectedName = "AL RAWI";
+      final homes = (list as List)
+          .whereType<Map>()
+          .map(HomeSummary.fromMap)
+          .where((h) => h.homeId > 0)
+          .toList();
 
-    if (homes.isNotEmpty) {
-      final first = homes.first;
-      selectedId = (first["homeId"] as num?)?.toInt();
-      selectedName = (first["name"] ?? "Home").toString();
-    }
+      int homeId = state.currentHomeId;
+      if (autoPickFirst && homeId <= 0 && homes.isNotEmpty) {
+        homeId = homes.first.homeId;
+      }
 
-    if (autoPickFirst && selectedId == null) {
-      final ensured = await TuyaPlatform.ensureHome(
-        name: "My Home",
-        geoName: "Oman",
-        rooms: const ["Living Room"],
+      state = state.copyWith(
+        busy: false,
+        homes: homes,
+        currentHomeId: homeId,
+        error: null,
       );
-      selectedId = (ensured["homeId"] as num?)?.toInt();
-      selectedName = (ensured["name"] ?? "My Home").toString();
+
+      // If we now have a homeId, set it on native to bootstrap BizBundle context.
+      if (homeId > 0) {
+        await setCurrentHome(homeId);
+      }
+    } catch (e) {
+      state = state.copyWith(busy: false, error: e.toString());
     }
-
-    return HomeHubState(
-      homes: homes,
-      selectedHomeId: selectedId,
-      selectedHomeName: selectedName,
-    );
   }
 
-  Future<void> loadHomes({required bool autoPickFirst}) async {
-    state = const AsyncLoading();
-    state = await AsyncValue.guard(() async {
-      return _loadHomes(autoPickFirst: autoPickFirst);
-    });
-  }
-
-  void selectHome(int id, String name) {
-    final current = state.value ?? HomeHubState.empty;
-    state = AsyncData(
-      current.copyWith(selectedHomeId: id, selectedHomeName: name),
-    );
-  }
-
+  /// Ensures there is a valid homeId:
+  /// - if existing currentHomeId is valid => return it
+  /// - else try home list
+  /// - else ensureHome (create default)
   Future<int> ensureHomeId() async {
-    final current = state.value;
-    final cached = current?.selectedHomeId;
-    if (cached != null && cached > 0) return cached;
+    if (state.currentHomeId > 0) return state.currentHomeId;
 
-    final homes = await TuyaPlatform.getHomeList();
-    if (homes.isNotEmpty) {
-      final hid = (homes.first["homeId"] as num?)?.toInt() ?? 0;
-      if (hid > 0) return hid;
+    // try to load homes
+    try {
+      final list = await TuyaPlatform.getHomeList();
+      final homes = (list as List)
+          .whereType<Map>()
+          .map(HomeSummary.fromMap)
+          .where((h) => h.homeId > 0)
+          .toList();
+
+      if (homes.isNotEmpty) {
+        final id = homes.first.homeId;
+        state = state.copyWith(homes: homes, currentHomeId: id, error: null);
+        await setCurrentHome(id);
+        return id;
+      }
+    } catch (_) {
+      // ignore, fallback to ensureHome
     }
 
-    final ensured = await TuyaPlatform.ensureHome(
+    // fallback: ensureHome creates or returns a default home
+    final home = await TuyaPlatform.ensureHome(
       name: "My Home",
       geoName: "Oman",
       rooms: const ["Living Room"],
     );
 
-    final hid = (ensured["homeId"] as num?)?.toInt() ?? 0;
-    if (hid <= 0) throw Exception("Failed to ensure homeId");
-    return hid;
+    final homeId =
+        (home is Map && home['homeId'] != null) ? (home['homeId'] as num).toInt() : 0;
+
+    if (homeId <= 0) {
+      throw StateError("ensureHome returned invalid homeId: $home");
+    }
+
+    state = state.copyWith(currentHomeId: homeId, error: null);
+    await setCurrentHome(homeId);
+    return homeId;
   }
 
-  Future<void> openBizAddDevice({int? homeId}) async {
-    state = const AsyncLoading();
-    state = await AsyncValue.guard(() async {
-      final hid = homeId ?? await ensureHomeId();
-      await _bizRepo.openAddDevice(homeId: hid);
-      // Keep state (don’t lose selected home)
-      return this.state.value ?? HomeHubState.empty;
-    });
+  /// ✅ Calls native `setCurrentHome` to fix BizBundle QR context (gid/token/relationId).
+  Future<void> setCurrentHome(int homeId) async {
+    if (homeId <= 0) return;
+    try {
+      await _native.invokeMethod('setCurrentHome', {'homeId': homeId});
+    } catch (e) {
+      // Don’t block the app — but keep the error for debugging.
+      state = state.copyWith(error: "setCurrentHome failed: $e");
+    }
   }
 
-  Future<void> openBizQrScan({int? homeId}) async {
-    state = const AsyncLoading();
-    state = await AsyncValue.guard(() async {
-      final hid = homeId ?? await ensureHomeId();
-      await _bizRepo.openQrScan(homeId: hid);
-      return this.state.value ?? HomeHubState.empty;
-    });
-  }
-}
-
-class HomeHubState {
-  final List<Map<String, dynamic>> homes;
-  final int? selectedHomeId;
-  final String selectedHomeName;
-
-  const HomeHubState({
-    required this.homes,
-    required this.selectedHomeId,
-    required this.selectedHomeName,
-  });
-
-  static const empty = HomeHubState(
-    homes: [],
-    selectedHomeId: null,
-    selectedHomeName: "AL RAWI",
-  );
-
-  HomeHubState copyWith({
-    List<Map<String, dynamic>>? homes,
-    int? selectedHomeId,
-    String? selectedHomeName,
-  }) {
-    return HomeHubState(
-      homes: homes ?? this.homes,
-      selectedHomeId: selectedHomeId ?? this.selectedHomeId,
-      selectedHomeName: selectedHomeName ?? this.selectedHomeName,
-    );
+  /// Use this if you want a manual home switch later.
+  Future<void> selectHome(int homeId) async {
+    if (homeId <= 0) return;
+    state = state.copyWith(currentHomeId: homeId, error: null);
+    await setCurrentHome(homeId);
   }
 }

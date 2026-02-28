@@ -11,8 +11,6 @@ class MainApplication : Application() {
     override fun onCreate() {
         super.onCreate()
 
-        // UI BizBundles use Fresco internally (device panels, images, QR flows, etc.)
-        // Init early to avoid runtime crashes when launching BizBundle UI.
         try {
             Fresco.initialize(this)
         } catch (t: Throwable) {
@@ -29,16 +27,29 @@ class MainApplication : Application() {
         }
 
         initBizBundleReflectively()
+
+        // ✅ After BizBundle init: if logged in + have saved homeId, bootstrap.
+        try {
+            if (ThingHomeSdk.getUserInstance().isLogin) {
+                val savedHomeId = TuyaBridge.getSavedHomeId(this)
+                if (savedHomeId > 0L) {
+                    TuyaBridge.bootstrapBizContext(
+                        ctx = this,
+                        homeId = savedHomeId,
+                        onOk = { Log.d(TAG, "✅ bootstrapBizContext at app start OK homeId=$savedHomeId") },
+                        onErr = { t -> Log.w(TAG, "bootstrapBizContext at app start failed: ${t.message}") }
+                    )
+                }
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "bootstrapBizContext at app start crashed: ${t.message}")
+        }
     }
 
     private fun initBizBundleReflectively() {
-        // Known initializer class name variants
         val candidates = listOf(
-            // ThingClips
             "com.thingclips.smart.bizbundle.initializer.BizBundleInitializer",
             "com.thingclips.smart.android.bizbundle.initializer.BizBundleInitializer",
-
-            // Tuya
             "com.tuya.smart.bizbundle.initializer.BizBundleInitializer",
             "com.tuya.smart.android.bizbundle.initializer.BizBundleInitializer"
         )
@@ -47,7 +58,6 @@ class MainApplication : Application() {
             try {
                 val initializerClass = Class.forName(className)
 
-                // Try easiest: init(Application)
                 initializerClass.methods.firstOrNull { m ->
                     m.name == "init" &&
                         m.parameterTypes.size == 1 &&
@@ -58,7 +68,6 @@ class MainApplication : Application() {
                     return
                 }
 
-                // Try: init(Application, RouteEventListener, ServiceEventListener)
                 val init3 = initializerClass.methods.firstOrNull { m ->
                     m.name == "init" && m.parameterTypes.size == 3 &&
                         Application::class.java.isAssignableFrom(m.parameterTypes[0])
@@ -76,7 +85,7 @@ class MainApplication : Application() {
                     return
                 }
 
-                Log.w(TAG, "⚠️ Found $className but no matching init(...) method signature")
+                Log.w(TAG, "⚠️ Found $className but no matching init(...) signature")
             } catch (t: Throwable) {
                 Log.w(TAG, "BizBundle init failed for $className: ${t.javaClass.simpleName}: ${t.message}")
             }
@@ -90,7 +99,6 @@ class MainApplication : Application() {
             iface.classLoader,
             arrayOf(iface)
         ) { _, method, args ->
-            // Some interfaces have onFaild(...) callbacks (yes, spelled like that in some SDKs)
             if (method.name.contains("onFail", ignoreCase = true)) {
                 Log.e(TAG, "❌ $label callback: method=${method.name} args=${args?.toList()}")
             }
