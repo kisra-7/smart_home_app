@@ -3,10 +3,8 @@ package com.example.alrawi_app
 import android.util.Log
 
 /**
- * Compile-safe family context helper (NO direct AbsBizBundleFamilyService import).
- *
- * Your SDK build does NOT expose AbsBizBundleFamilyService in the app classpath,
- * so we do the official "shift current family/home" step via reflection only.
+ * Compile-safe helper (NO direct AbsBizBundleFamilyService import).
+ * Tries to shift BizBundle "current home/family" via reflection when possible.
  */
 object BizBundleFamilyServiceImpl {
 
@@ -19,24 +17,14 @@ object BizBundleFamilyServiceImpl {
         currentHomeId = homeId
         currentHomeName = homeName
         Log.d(TAG, "➡️ setHome(homeId=$homeId, name=$homeName)")
-
-        // Try to shift BizBundle "current family" using reflection.
         shiftCurrentFamilyReflectively(homeId, homeName)
     }
 
     fun getHomeId(): Long = currentHomeId
     fun getHomeName(): String = currentHomeName
 
-    /**
-     * Official docs concept:
-     * MicroServiceManager.findServiceByInterface(AbsBizBundleFamilyService) then shiftCurrentFamily(homeId, homeName)
-     *
-     * We do it reflection-only because AbsBizBundleFamilyService is not visible at compile time in your build.
-     */
     private fun shiftCurrentFamilyReflectively(homeId: Long, homeName: String) {
         val microCandidates = listOf(
-            // Add more candidates because your previous log said "MicroServiceManager not found"
-            // from app side, even though SDK logs show it exists internally.
             "com.thingclips.smart.android.common.utils.MicroServiceManager",
             "com.tuya.smart.android.common.utils.MicroServiceManager",
             "com.thingclips.smart.android.module.MicroServiceManager",
@@ -56,7 +44,7 @@ object BizBundleFamilyServiceImpl {
             val microClz = microCandidates.firstNotNullOfOrNull {
                 try { Class.forName(it) } catch (_: Throwable) { null }
             } ?: run {
-                Log.w(TAG, "⚠️ MicroServiceManager not found in app classpath (will rely on SDK internal state).")
+                Log.w(TAG, "⚠️ MicroServiceManager not found in app classpath.")
                 return
             }
 
@@ -67,52 +55,36 @@ object BizBundleFamilyServiceImpl {
                 return
             }
 
-            val getInstance = microClz.methods.firstOrNull { it.name == "getInstance" && it.parameterTypes.isEmpty() }
-                ?: run {
-                    Log.w(TAG, "⚠️ MicroServiceManager.getInstance() not found")
-                    return
-                }
-
-            val mgr = getInstance.invoke(null) ?: run {
+            val mgr = microClz.getMethod("getInstance").invoke(null) ?: run {
                 Log.w(TAG, "⚠️ MicroServiceManager.getInstance() returned null")
                 return
             }
 
-            val find = microClz.methods.firstOrNull {
-                it.name == "findServiceByInterface" && it.parameterTypes.size == 1 && it.parameterTypes[0] == String::class.java
-            } ?: run {
-                Log.w(TAG, "⚠️ MicroServiceManager.findServiceByInterface(String) not found")
-                return
-            }
-
-            val service = find.invoke(mgr, absFamilyName) ?: run {
+            val service = microClz.getMethod("findServiceByInterface", String::class.java)
+                .invoke(mgr, absFamilyName) ?: run {
                 Log.w(TAG, "⚠️ No family service registered for: $absFamilyName")
                 return
             }
 
-            // Prefer shiftCurrentFamily(long, String)
             val shift = service.javaClass.methods.firstOrNull { m ->
                 m.name == "shiftCurrentFamily" && m.parameterTypes.size == 2
             }
-
             if (shift != null) {
                 shift.invoke(service, homeId, homeName)
-                Log.d(TAG, "✅ shiftCurrentFamily applied via MicroServiceManager homeId=$homeId name=$homeName")
+                Log.d(TAG, "✅ shiftCurrentFamily applied (reflect) homeId=$homeId name=$homeName")
                 return
             }
 
-            // Fallback: setCurrentHomeId(long) / setCurrentFamilyId(long)
             val setId = service.javaClass.methods.firstOrNull { m ->
                 (m.name == "setCurrentHomeId" || m.name == "setCurrentFamilyId") && m.parameterTypes.size == 1
             }
-
             if (setId != null) {
                 setId.invoke(service, homeId)
-                Log.d(TAG, "✅ setCurrentHomeId applied via MicroServiceManager homeId=$homeId")
+                Log.d(TAG, "✅ setCurrentHomeId applied (reflect) homeId=$homeId")
                 return
             }
 
-            Log.w(TAG, "⚠️ Family service found but no shiftCurrentFamily/setCurrentHomeId methods found.")
+            Log.w(TAG, "⚠️ Family service found but no shift/setCurrent methods found.")
         } catch (t: Throwable) {
             Log.w(TAG, "⚠️ shiftCurrentFamilyReflectively failed: ${t.message}")
         }

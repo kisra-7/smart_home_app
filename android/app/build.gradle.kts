@@ -84,6 +84,8 @@ dependencies {
 
     // Tuya requirement for BizBundle compatibility (per Tuya doc in some solutions)
     implementation("org.apache.ant:ant:1.10.5")
+    
+    implementation("com.thingclips.smart:thingsmart-bizbundle-family")
 
     // ✅ Keep versions CONSISTENT (same for SDK + BizBundlesBom)
     val tuyaVersion = "6.11.6"

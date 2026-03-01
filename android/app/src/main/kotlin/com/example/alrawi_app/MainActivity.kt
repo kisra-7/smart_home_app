@@ -7,8 +7,17 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
 
-    // ✅ MUST MATCH Dart side exactly
     private val channelName = "tuya_bridge"
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+
+        val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
+        TuyaBridge.bindActivity(this)
+        channel.setMethodCallHandler { call, result ->
+            TuyaBridge.handle(call, result)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -18,16 +27,5 @@ class MainActivity : FlutterActivity() {
     override fun onDestroy() {
         TuyaBridge.unbindActivity(this)
         super.onDestroy()
-    }
-
-    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
-        super.configureFlutterEngine(flutterEngine)
-
-        val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
-        TuyaBridge.setChannel(channel)
-
-        channel.setMethodCallHandler { call, result ->
-            TuyaBridge.handle(call, result)
-        }
     }
 }
